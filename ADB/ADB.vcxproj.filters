@@ -26,9 +26,6 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="main.c">
-      <Filter>Header Files</Filter>
-    </ClCompile>
     <ClCompile Include="renderer.c">
       <Filter>Source Files</Filter>
     </ClCompile>

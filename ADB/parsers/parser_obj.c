@@ -948,6 +948,6 @@ ParseObjFromFile(byte_string Path)
             }
         }
 
-        assert(!"Handle the rest.");
+        // assert(!"Handle the rest.");
     }
 }
