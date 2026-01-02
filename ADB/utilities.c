@@ -1,5 +1,7 @@
 #include <stdint.h>
 #include <stdbool.h>
+#include <assert.h>
+#include <string.h>
 
 #include "utilities.h"         // Implementation Header
 
@@ -173,14 +175,93 @@ LeaveMemoryRegion(memory_region Region)
     PopArenaTo(Region.Arena, Region.Marker);
 }
 
-#define PushArrayNoZeroAligned(Arena, Type, Count, Align) \
-    ((Type *)PushArena((Arena), sizeof(Type) * (Count), (Align)))
+// ==============================================
+// <Strings>
+// ==============================================
 
-#define PushArrayAligned(Arena, Type, Count, Align) \
-    PushArrayNoZeroAligned((Arena), Type, (Count), (Align))
 
-#define PushArray(Arena, Type, Count) \
-    PushArrayAligned((Arena), Type, (Count), ((sizeof(Type) < 8) ? 8 : _Alignof(Type)))
+byte_string
+ByteString(uint8_t *Data, uint64_t Size)
+{
+    return (byte_string) {
+        .Data = Data,
+        .Size = Size,
+    };
+}
 
-#define PushStruct(Arena, Type) \
-    PushArray((Arena), Type, 1)
+
+bool
+IsValidByteString(byte_string String)
+{
+    bool Result = String.Data && String.Size;
+    return Result;
+}
+
+
+bool
+ByteStringCompare(byte_string A, byte_string B)
+{
+    bool Result = false;
+
+    if (IsValidByteString(A) && IsValidByteString(B) && A.Size == B.Size)
+    {
+        uint64_t At = 0;
+        while (At < A.Size && At < B.Size && A.Data[At] == B.Data[At])
+        {
+            ++At;
+        }
+
+        Result = At == A.Size;
+    }
+
+    return Result;
+}
+
+
+byte_string
+ByteStringCopy(byte_string Input, memory_arena * Arena)
+{
+    byte_string Result = ByteString(0, 0);
+
+    if (IsValidByteString(Input) && Arena)
+    {
+        Result.Data = PushArray(Arena, uint8_t, Input.Size);
+        Result.Size = Input.Size;
+
+        memcpy(Result.Data, Input.Data, Input.Size);
+    }
+
+    return Result;
+}
+
+
+byte_string
+ReplaceFileName(byte_string Path, byte_string Name, memory_arena *Arena)
+{
+    byte_string Result = ByteString(0, 0);
+
+    if (IsValidByteString(Path) && IsValidByteString(Name) || !Arena)
+    {
+        uint64_t Slash = Path.Size;
+        while (Slash > 0)
+        {
+            uint8_t C = Path.Data[Slash - 1];
+            if (C == '/' || C == '\\')
+            {
+                break;
+            }
+
+            --Slash;
+        }
+
+        Result.Size = Slash + Name.Size;
+        Result.Data = PushArray(Arena, uint8_t, Result.Size);
+
+        assert(IsValidByteString(Result));
+
+        memcpy(Result.Data, Path.Data, Slash);
+        memcpy(Result.Data + Slash, Name.Data, Name.Size);
+    }
+
+    return Result;
+}

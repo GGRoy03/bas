@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <stdbool.h>
 
 // ==============================================
 // <Utility Macros>
@@ -64,3 +65,23 @@ void           LeaveMemoryRegion  (memory_region Region);
 #define PushArrayAligned(Arena, Type, Count, Align)        PushArrayNoZeroAligned((Arena), Type, (Count), (Align))
 #define PushArray(Arena, Type, Count)                      PushArrayAligned((Arena), Type, (Count), ((sizeof(Type) < 8) ? 8 : _Alignof(Type)))
 #define PushStruct(Arena, Type)                            PushArray((Arena), Type, 1)
+
+// ==============================================
+// <Strings>
+// ==============================================
+
+typedef struct
+{
+    uint8_t *Data;
+    uint64_t Size;
+} byte_string;
+
+#define ByteStringLiteral(String) ByteString((uint8_t *)String, sizeof(String) - 1)
+
+byte_string ByteString         (uint8_t *Data, uint64_t Size);
+bool        IsValidByteString  (byte_string String);
+
+bool        ByteStringCompare  (byte_string A, byte_string B);
+byte_string ByteStringCopy     (byte_string Input, memory_arena *Arena);
+
+byte_string ReplaceFileName    (byte_string Path, byte_string Name, memory_arena *Arena);
