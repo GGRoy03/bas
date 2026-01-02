@@ -129,12 +129,17 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="engine\engine.c" />
+    <ClCompile Include="engine\rendering\d3d11\d3d11.c" />
     <ClCompile Include="platform\win32.c" />
-    <ClCompile Include="renderer.c" />
+    <ClCompile Include="engine\rendering\renderer.c" />
     <ClCompile Include="utilities.c" />
     <ClCompile Include="parsers\parser_obj.c">
       <FileType>CppCode</FileType>
     </ClCompile>
+    <ClInclude Include="engine\engine.h" />
+    <ClInclude Include="engine\rendering\d3d11\d3d11.h" />
+    <ClInclude Include="engine\rendering\renderer.h" />
     <ClInclude Include="parsers\parser_obj.h" />
     <ClInclude Include="platform\platform.h" />
     <ClInclude Include="utilities.h" />

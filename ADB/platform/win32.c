@@ -3,10 +3,12 @@
 #include <stdbool.h>
 
 #include "utilities.h"
-#include "parsers/parser_obj.h"
+#include "engine/engine.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
+
+#include "engine/rendering/d3d11/d3d11.h"
 
 // ==============================================
 // <Memory> : PUBLIC
@@ -39,6 +41,18 @@ static void
 Win32Sleep(DWORD Milliseconds)
 {
     Sleep(Milliseconds);
+}
+
+
+static void
+Win32GetClientSize(HWND Window, int *OutWidth, int *OutHeight)
+{
+    RECT Client;
+    if (GetClientRect(Window, &Client))
+    {
+        *OutWidth  = Client.right  - Client.left;
+        *OutHeight = Client.bottom - Client.top;
+    }
 }
 
 
@@ -99,10 +113,9 @@ int WINAPI
 WinMain(HINSTANCE HInstance, HINSTANCE PrevInstance, LPSTR CmdLine, int CmdShow)
 {
     HWND WindowHandle = Win32CreateWindow(1920, 1080, HInstance, CmdShow);
+    BOOL Running      = true;
 
-    ParseObjFromFile(ByteStringLiteral("data/Lowpoly_tree_sample.obj"));
-
-    BOOL Running = true;
+    renderer *Renderer = D3D11Initialize(WindowHandle);
 
     while (Running)
     {
@@ -117,6 +130,11 @@ WinMain(HINSTANCE HInstance, HINSTANCE PrevInstance, LPSTR CmdLine, int CmdShow)
             TranslateMessage(&Message);
             DispatchMessageA(&Message);
         }
+
+        int ClientWidth, ClientHeight;
+        Win32GetClientSize(WindowHandle, &ClientWidth, &ClientHeight);
+
+        UpdateEngine(ClientWidth, ClientHeight, Renderer);
 
         Win32Sleep(8);
     }

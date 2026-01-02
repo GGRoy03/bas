@@ -24,9 +24,18 @@
     <ClInclude Include="parsers\parser_obj.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="engine\engine.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="engine\rendering\renderer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="engine\rendering\d3d11\d3d11.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="renderer.c">
+    <ClCompile Include="engine\rendering\renderer.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="utilities.c">
@@ -37,6 +46,12 @@
     </ClCompile>
     <ClCompile Include="parsers\parser_obj.c">
       <Filter>Header Files</Filter>
+    </ClCompile>
+    <ClCompile Include="engine\engine.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="engine\rendering\d3d11\d3d11.c">
+      <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

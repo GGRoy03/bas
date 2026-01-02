@@ -3,5 +3,5 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="ADB/ADB.vcxproj" />
+  <Project Path="ADB/ADB.vcxproj" Id="37442755-6ffa-40b9-ba59-08920a2e82be" />
 </Solution>
