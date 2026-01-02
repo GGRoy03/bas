@@ -134,9 +134,10 @@
     <ClCompile Include="platform\win32.c" />
     <ClCompile Include="renderer.c" />
     <ClCompile Include="utilities.c" />
-    <ClCompile Include="parser_obj.c">
+    <ClCompile Include="parsers\parser_obj.c">
       <FileType>CppCode</FileType>
     </ClCompile>
+    <ClInclude Include="parsers\parser_obj.h" />
     <ClInclude Include="platform\platform.h" />
     <ClInclude Include="utilities.h" />
   </ItemGroup>

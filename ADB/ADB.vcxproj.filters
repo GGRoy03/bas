@@ -21,6 +21,9 @@
     <ClInclude Include="platform\platform.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="parsers\parser_obj.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.c">
@@ -35,7 +38,7 @@
     <ClCompile Include="platform\win32.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="parser_obj.c">
+    <ClCompile Include="parsers\parser_obj.c">
       <Filter>Header Files</Filter>
     </ClCompile>
   </ItemGroup>
