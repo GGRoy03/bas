@@ -1,5 +1,10 @@
 #pragma once
 
+// TODO:
+// 1) Threaded Texture IO
+// 2) Figure out memory stuff
+// 3) Write to IF and pull the specific types in.
+
 #include <stdint.h>
 #include <assert.h>
 #include <stdio.h>
@@ -8,6 +13,10 @@
 #include <string.h>
 
 #include "../utilities.h"
+#include "parser_obj.h"
+
+#define STB_IMAGE_IMPLEMENTATION
+#include "third_party/stb_image.h"
 
 typedef struct
 {
@@ -57,7 +66,7 @@ PeekBuffer(buffer *Buffer)
 static bool
 IsNewLine(uint8_t Token)
 {
-    bool Result = Token == '\r' || Token == '\n';
+    bool Result = Token == '\n';
     return Result;
 }
 
@@ -65,7 +74,7 @@ IsNewLine(uint8_t Token)
 static bool
 IsWhiteSpace(uint8_t Token)
 {
-    bool Result = Token == ' ' || Token == '\t';
+    bool Result = Token == ' ' || Token == '\t' || Token == '\r';
     return Result;
 }
 
@@ -93,7 +102,7 @@ ReadFileInBuffer(byte_string Path, memory_arena *Arena)
         
                     Result.Data       = Buffer;
                     Result.At         = 0;
-                    Result.Size       = BytesRead;
+                    Result.Size       = FileSize + 1;
                     Buffer[BytesRead] = '\0';
                 }
             }
@@ -251,7 +260,10 @@ BufferStartsWith(byte_string String, buffer *Buffer)
 }
 
 
-// MTL Specific.
+// ==============================================
+// <.MTL File Parsing>
+// ==============================================
+
 
 typedef struct
 {
@@ -272,8 +284,13 @@ typedef struct
     obj_color   Diffuse;
     obj_color   Ambient;
     obj_color   Specular;
+    obj_color   Emissive;
     float       Shininess;
     float       Opacity;
+
+    byte_string ColorTexture;
+    byte_string NormalTexture;
+    byte_string RoughnessTexture;
 } obj_material;
 
 
@@ -314,20 +331,24 @@ FindMaterial(byte_string Name, obj_material_list *List)
 }
 
 
-// TODO: What do we even want to return from this?
 static obj_material_node *
-ParseMTLFromFile(byte_string Path, memory_arena *ParseArena)
+ParseMTLFromFile(byte_string Path, uint32_t *StringFootprint, memory_arena *ParseArena)
 {
     obj_material_node *First = 0;
     obj_material_node *Last  = 0;
 
-    buffer Buffer = ReadFileInBuffer(Path, ParseArena);
+    buffer FileBuffer = ReadFileInBuffer(Path, ParseArena);
 
-    if (IsBufferValid(&Buffer))
+    if (IsBufferValid(&FileBuffer))
     {
-        while (IsBufferValid(&Buffer) && IsBufferInBounds(&Buffer))
+        while (IsBufferValid(&FileBuffer) && IsBufferInBounds(&FileBuffer))
         {
-            char Token = GetNextToken(&Buffer);
+            uint8_t Token = GetNextToken(&FileBuffer);
+            
+            if (Token == '\0')
+            {
+                break;
+            }
 
             switch (Token)
             {
@@ -335,20 +356,20 @@ ParseMTLFromFile(byte_string Path, memory_arena *ParseArena)
             case 'n':   
             {
                 byte_string Rest = ByteStringLiteral("ewmtl");
-                if (BufferStartsWith(Rest, &Buffer))
+                if (BufferStartsWith(Rest, &FileBuffer))
                 {
-                    Buffer.At += Rest.Size;
-                    SkipWhitespaces(&Buffer);
+                    FileBuffer.At += Rest.Size;
+                    SkipWhitespaces(&FileBuffer);
 
-                    byte_string MtlName = ParseToIdentifier(&Buffer);
+                    byte_string MtlName = ParseToIdentifier(&FileBuffer);
                     if (IsValidByteString(MtlName))
                     {
                         // Shouldn't we push into the output arena?
                         obj_material_node *Node = PushStruct(ParseArena, obj_material_node);
                         if (Node)
                         {
-                            Node->Next  = 0;
-                            Node->Value.Name      = ByteStringCopy(MtlName, ParseArena);
+                            Node->Next = 0;
+                            Node->Value.Name = ByteStringCopy(MtlName, ParseArena);
                             // Node->Value.Ambient   = {0, 0, 0};
                             // Node->Value.Diffuse   = {0, 0, 0};
                             // Node->Value.Specular  = {0};
@@ -360,12 +381,14 @@ ParseMTLFromFile(byte_string Path, memory_arena *ParseArena)
                                 First = Node;
                                 Last  = Node;
                             }
-                            else
+                            else if (Last)
                             {
-                                assert(Last);
-                        
                                 Last->Next = Node;
                                 Last       = Node;
+                            }
+                            else
+                            {
+                                assert(!"INVALID PARSER STATE");
                             }
                         }
                     }
@@ -378,31 +401,35 @@ ParseMTLFromFile(byte_string Path, memory_arena *ParseArena)
                 {
                     obj_color *Color = 0;
 
-                    if (PeekBuffer(&Buffer) == (uint8_t)'d')
+                    if (PeekBuffer(&FileBuffer) == (uint8_t)'d')
                     {
                         Color = &Last->Value.Diffuse;
                     }
-                    else if (PeekBuffer(&Buffer) == (uint8_t)'a')
+                    else if (PeekBuffer(&FileBuffer) == (uint8_t)'a')
                     {
                         Color = &Last->Value.Ambient;
                     }
-                    else if (PeekBuffer(&Buffer) == (uint8_t)'s')
+                    else if (PeekBuffer(&FileBuffer) == (uint8_t)'s')
                     {
                         Color = &Last->Value.Specular;
+                    }
+                    else if (PeekBuffer(&FileBuffer) == (uint8_t)'e')
+                    {
+                        Color = &Last->Value.Emissive;
                     }
                     else
                     {
                         assert(!"UNKNOWN TOKEN");
                     }
 
-                    ++Buffer.At; // Is it correct for all cases of 'K' ?
+                    ++FileBuffer.At; // Is it correct for all cases of 'K' ?
 
                     assert(Color);
                     for (uint32_t Idx = 0; Idx < 3; ++Idx)
                     {
-                        SkipWhitespaces(&Buffer);
+                        SkipWhitespaces(&FileBuffer);
 
-                        Color->AsBuffer[Idx] = ParseToFloat(&Buffer);
+                        Color->AsBuffer[Idx] = ParseToFloat(&FileBuffer);
                     }
                 }
                 else
@@ -411,16 +438,64 @@ ParseMTLFromFile(byte_string Path, memory_arena *ParseArena)
                 }
             } break;
 
+            // TODO: Remove the loading from here.
+            case 'm':
+            {
+                byte_string Rest = ByteStringLiteral("ap");
+                if (BufferStartsWith(Rest, &FileBuffer) && Last)
+                {
+                    FileBuffer.At += Rest.Size;
+                    SkipWhitespaces(&FileBuffer);
+
+                    byte_string NormalMap    = ByteStringLiteral("_Bump");
+                    byte_string ColorMap     = ByteStringLiteral("_Kd");
+                    byte_string RoughnessMap = ByteStringLiteral("_Ns");
+
+                    byte_string *TextureName = 0;
+
+                    if (BufferStartsWith(NormalMap, &FileBuffer))
+                    {
+                        FileBuffer.At += NormalMap.Size;
+                        TextureName    = &Last->Value.NormalTexture;
+                    }
+                    else if (BufferStartsWith(ColorMap, &FileBuffer))
+                    {
+                        FileBuffer.At += ColorMap.Size;
+                        TextureName    = &Last->Value.ColorTexture;
+                    }
+                    else if (BufferStartsWith(RoughnessMap, &FileBuffer))
+                    {
+                        FileBuffer.At += RoughnessMap.Size;
+                        TextureName    = &Last->Value.RoughnessTexture;
+                    }
+                    else
+                    {
+                        assert(!"INVALID TOKEN");
+                    }
+
+                    SkipWhitespaces(&FileBuffer);
+
+                    // But we need to know the size of the string, because it counts in the footprint.
+                    if (TextureName)
+                    {
+                        byte_string Name = ParseToIdentifier(&FileBuffer);
+
+                        StringFootprint += Name.Size;
+                        *TextureName     = Name;
+                    }
+                }
+            }
+
             case 'N':
             {
-                if (PeekBuffer(&Buffer) == (uint8_t)'s')
+                if (PeekBuffer(&FileBuffer) == (uint8_t)'s')
                 {
-                    ++Buffer.At;
-                    SkipWhitespaces(&Buffer);
+                    ++FileBuffer.At;
+                    SkipWhitespaces(&FileBuffer);
 
                     if (Last)
                     {
-                        Last->Value.Shininess = ParseToFloat(&Buffer);
+                        Last->Value.Shininess = ParseToFloat(&FileBuffer);
                     }
                     else
                     {
@@ -431,26 +506,25 @@ ParseMTLFromFile(byte_string Path, memory_arena *ParseArena)
 
             case 'd':
             {
-                SkipWhitespaces(&Buffer);
+                SkipWhitespaces(&FileBuffer);
 
                 assert(Last);
-                Last->Value.Opacity = ParseToFloat(&Buffer);
+                Last->Value.Opacity = ParseToFloat(&FileBuffer);
             } break;
 
             // Ignore those lines.
             case 'i':
             case '#':
             {
-                while (IsBufferInBounds(&Buffer) && !IsNewLine(PeekBuffer(&Buffer)))
+                while (IsBufferInBounds(&FileBuffer) && !IsNewLine(PeekBuffer(&FileBuffer)))
                 {
-                    ++Buffer.At;
+                    ++FileBuffer.At;
                 }
             } break;
 
-            case '\r':
             case '\n':
             {
-                ++Buffer.At;
+                // No-Op
             } break;
 
             default:
@@ -465,71 +539,23 @@ ParseMTLFromFile(byte_string Path, memory_arena *ParseArena)
     return First;
 }
 
-// OBJ Specific.
-
-#define OBJ_MAX_VALUE_PER_VERTEX  4
-#define OBJ_MAX_VALUE_PER_NORMAL  3
-#define OBJ_MAX_VALUE_PER_TEXTURE 2
-
-typedef struct
-{
-    union
-    {
-        struct
-        {
-            float X, Y, Z, W;
-        };
-        float AsBuffer[OBJ_MAX_VALUE_PER_VERTEX];
-    };
-} obj_position;
+// ==============================================
+// <.OBJ File Parsing>
+// ==============================================
 
 
 typedef struct
 {
-    union
-    {
-        struct
-        {
-            float X, Y, Z;
-        };
-        float AsBuffer[OBJ_MAX_VALUE_PER_NORMAL];
-    };
-} obj_normal;
-
-
-typedef struct
-{
-    union
-    {
-        struct
-        {
-            float X, Y;
-        };
-        float AsBuffer[OBJ_MAX_VALUE_PER_TEXTURE];
-    };
-} obj_texture;
-
-
-typedef struct
-{
-    obj_position Position;
-    obj_texture  Texture;
-    obj_normal   Normal;
+    uint32_t PositionIndex;
+    uint32_t TextureIndex;
+    uint32_t NormalIndex;
 } obj_vertex;
 
 
 typedef struct
 {
-    int Position;
-    int Texture;
-    int Normal;
-} obj_face_vertex;
-
-
-typedef struct
-{
-    obj_vertex  *VertexBuffer;
-    uint64_t     VertexBufferSize;
+    uint32_t     VertexStart;
+    uint32_t     VertexCount;
     obj_material Material;
 } obj_submesh;
 
@@ -567,146 +593,110 @@ typedef struct
     obj_mesh_node *First;
     obj_mesh_node *Last;
     uint32_t       Count;
-
-    memory_arena  *BackingMemory;
 } obj_mesh_list;
 
 
-typedef struct
-{
-    obj_material_list *MaterialList;
-    obj_mesh_node     *MeshNode;
-    memory_arena      *ParseArena;
-    memory_arena      *OutputArena;
-    uint64_t          SubmeshStart;
-} obj_parser_state;
+// I still am unsure about the allocation strategy so force a huge number for now.
+#define MAX_ATTRIBUTE_PER_FILE 1'000'000
 
 
-static void
-ClearParserState(obj_parser_state *State)
-{
-    if (State)
-    {
-        if (!State->ParseArena)
-        {
-            memory_arena_params Params =
-            {
-                .AllocatedFromFile = __FILE__,
-                .AllocatedFromLine = __LINE__,
-                .CommitSize        = MiB(64),
-                .ReserveSize       = GiB(1),
-            };
-
-            State->ParseArena = AllocateArena(Params);
-        }
-
-        if (!State->OutputArena)
-        {
-            memory_arena_params Params =
-            {
-                .AllocatedFromFile = __FILE__,
-                .AllocatedFromLine = __LINE__,
-                .CommitSize        = MiB(64),
-                .ReserveSize       = GiB(1),
-            };
-
-            State->OutputArena = AllocateArena(Params);
-        }
-
-        // I don't know enough about the format yet.
-
-        // ClearArena(State->ParseArena);
-        // ClearArena(State->OutputArena);
-    }
-}
-
-
-void
+mesh_data
 ParseObjFromFile(byte_string Path)
 {
-    obj_parser_state State = {0};
-    ClearParserState(&State);
+    mesh_data MeshData = {0};
 
-    obj_mesh_list *MeshList = PushStruct(State.OutputArena, obj_mesh_list);
-    if (!MeshList)
+    // Initialize the parsing state
+    // (May be abstracted to reduce memory allocs when parsing a sequence of files.)
+
+    buffer             FileBuffer        = {0};
+    vec3              *PositionBuffer    = 0;
+    uint32_t           PositionCount     = 0;
+    vec3              *NormalBuffer      = 0;
+    uint32_t           NormalCount       = 0;
+    vec2              *TextureBuffer     = 0;
+    uint32_t           TextureCount      = 0;
+    obj_vertex        *VertexBuffer      = 0;
+    uint32_t           VertexCount       = 0;
+    uint32_t           TotalSubmeshCount = 0;
+    obj_mesh_list     *MeshList          = 0;
+    obj_material_list *MaterialList      = 0;
+    uint64_t           StringFootprint   = 0;
+    memory_arena      *ParseArena        = {0};
     {
-        assert(!"OUT OF MEMORY");
-    }
-    MeshList->BackingMemory = State.OutputArena;
-
-    // The overall allocation strategy is this:
-    // [MeshList|SubMesh0|Submesh0.Data|Submesh1|Submesh1.Data|Submesh2|Submesh2.Data] -> Output Arena
-    // We return the MeshList which contains the arena to prevent leaks.
-
-    buffer Buffer = ReadFileInBuffer(Path, State.ParseArena);
-    if (IsBufferValid(&Buffer))
-    {
-        // The overall allocation strategy is this:
-        // [PositionBuffer0|NormalBuffer0|TextureBuffer0|PositionBuffer1|TextureBuffer1] -> Parse Arena
-        // Re-Allocate into the arena as we need. Need some minor logic to find the current block to read from.
-        // We'll keep it on the stack for now.
-
-        obj_position *PositionBuffer = PushArray(State.ParseArena, obj_position, 512);
-        uint32_t      PositionIndex  = 0;
-        obj_normal   *NormalBuffer   = PushArray(State.ParseArena, obj_normal  , 512);
-        uint32_t      NormalIndex    = 0;
-        obj_texture  *TextureBuffer  = PushArray(State.ParseArena, obj_texture , 512);
-        uint32_t      TextureIndex   = 0;
-
-        if (!PositionBuffer || !NormalBuffer || !TextureBuffer)
+        memory_arena_params Params =
         {
-            assert(!"OUT OF MEMORY");
+            .AllocatedFromFile = __FILE__,
+            .AllocatedFromLine = __LINE__,
+            .CommitSize        = MiB(64),
+            .ReserveSize       = GiB(1),
+        };
+
+        ParseArena = AllocateArena(Params);
+
+        if (ParseArena)
+        {
+             MeshList       = PushStruct(ParseArena, obj_mesh_list);
+             MaterialList   = PushStruct(ParseArena, obj_material_list);
+             FileBuffer     = ReadFileInBuffer(Path, ParseArena);
+             PositionBuffer = PushArray(ParseArena, vec3      , MAX_ATTRIBUTE_PER_FILE);
+             NormalBuffer   = PushArray(ParseArena, vec3      , MAX_ATTRIBUTE_PER_FILE);
+             TextureBuffer  = PushArray(ParseArena, vec2      , MAX_ATTRIBUTE_PER_FILE);
+             VertexBuffer   = PushArray(ParseArena, obj_vertex, MAX_ATTRIBUTE_PER_FILE);
         }
+    }
 
-        while (IsBufferValid(&Buffer) && IsBufferInBounds(&Buffer))
+    if (IsBufferValid(&FileBuffer) && PositionBuffer && NormalBuffer && TextureBuffer && VertexBuffer && MeshList && MaterialList && ParseArena)
+    {
+        while (IsBufferValid(&FileBuffer) && IsBufferInBounds(&FileBuffer))
         {
-            char Token = GetNextToken(&Buffer);
+            SkipWhitespaces(&FileBuffer);
 
-            if (Token == '\0')
-            {
-                break;
-            }
-
+            uint8_t Token = GetNextToken(&FileBuffer);
             switch (Token)
             {
 
             case 'v':
-            case 'V':
             {
-                SkipWhitespaces(&Buffer);
+                // Should be a hard check.
+                assert(PositionCount < MAX_ATTRIBUTE_PER_FILE);
+                assert(NormalCount   < MAX_ATTRIBUTE_PER_FILE);
+                assert(TextureCount  < MAX_ATTRIBUTE_PER_FILE);
+                assert(VertexCount   < MAX_ATTRIBUTE_PER_FILE);
+
+                SkipWhitespaces(&FileBuffer);
 
                 uint32_t Limit       = 0;
                 float   *FloatBuffer = 0;
 
-                if (PeekBuffer(&Buffer) == (uint8_t)'n' || PeekBuffer(&Buffer) == (uint8_t)'N')
+                if (PeekBuffer(&FileBuffer) == (uint8_t)'n' || PeekBuffer(&FileBuffer) == (uint8_t)'N')
                 {
-                    Limit       = OBJ_MAX_VALUE_PER_NORMAL;
-                    FloatBuffer = NormalBuffer[NormalIndex++].AsBuffer;
+                    Limit       = 3;
+                    FloatBuffer = NormalBuffer[NormalCount++].AsBuffer;
 
-                    ++Buffer.At;
+                    ++FileBuffer.At;
                 } else
-                if (PeekBuffer(&Buffer) == (uint8_t)'t' || PeekBuffer(&Buffer) == (uint8_t)'T')
+                if (PeekBuffer(&FileBuffer) == (uint8_t)'t' || PeekBuffer(&FileBuffer) == (uint8_t)'T')
                 {
-                    Limit       = OBJ_MAX_VALUE_PER_TEXTURE;
-                    FloatBuffer = TextureBuffer[TextureIndex++].AsBuffer;
+                    Limit       = 2;
+                    FloatBuffer = TextureBuffer[TextureCount++].AsBuffer;
 
-                    ++Buffer.At;
+                    ++FileBuffer.At;
                 }
                 else
                 {
-                    Limit       = OBJ_MAX_VALUE_PER_VERTEX;
-                    FloatBuffer = PositionBuffer[PositionIndex++].AsBuffer;
+                    Limit       = 3;
+                    FloatBuffer = PositionBuffer[PositionCount++].AsBuffer;
                 }
 
                 if (Limit && FloatBuffer)
                 {
                     for (uint32_t Idx = 0; Idx < Limit; ++Idx)
                     {
-                        SkipWhitespaces(&Buffer);
+                        SkipWhitespaces(&FileBuffer);
 
-                        if (IsBufferInBounds(&Buffer))
+                        if (IsBufferInBounds(&FileBuffer))
                         {
-                            FloatBuffer[Idx] = ParseToFloat(&Buffer);
+                            FloatBuffer[Idx] = ParseToFloat(&FileBuffer);
                         }
                         else
                         {
@@ -722,109 +712,123 @@ ParseObjFromFile(byte_string Path)
 
 
             case 'f':
-            case 'F':
             {
-                SkipWhitespaces(&Buffer);
+                SkipWhitespaces(&FileBuffer);
 
-                while (!IsNewLine(PeekBuffer(&Buffer)))
+                // What is the maximum amount? Is it infinite?
+                // In which case we have to be more clever and push temporary data into the arena?
+                // And then erase it? Like a small memory region?
+
+                obj_vertex ParsedVertices[32] = {0};
+                uint32_t   VertexCountInLine  = 0;
+
+                while (!IsNewLine(PeekBuffer(&FileBuffer)) && VertexCountInLine < 32)
                 {
-                    SkipWhitespaces(&Buffer);
+                    SkipWhitespaces(&FileBuffer);
 
-                    obj_face_vertex Face = { 0, 0, 0 };
+                    obj_vertex *Vertex = &ParsedVertices[VertexCountInLine++];
 
-                    Face.Position = (int)ParseToNumber(&Buffer);
-
-                    if (PeekBuffer(&Buffer) == '/')
+                    int PositionIndex = (int)ParseToNumber(&FileBuffer);
+                    if (PositionIndex > 0)
                     {
-                        ++Buffer.At;
-
-                        if (PeekBuffer(&Buffer) != '/')
-                        {
-                            Face.Texture = (int)ParseToNumber(&Buffer);
-                        }
-
-                        if (PeekBuffer(&Buffer) == '/')
-                        {
-                            ++Buffer.At;
-
-                            Face.Normal = (int)ParseToNumber(&Buffer);
-                        }
+                        Vertex->PositionIndex = PositionIndex - 1;
                     }
 
-                    // TODO: Add support for negative indices.
-                    obj_vertex *Vertex = PushStruct(State.OutputArena, obj_vertex);
-                    if (Vertex)
+                    if (PeekBuffer(&FileBuffer) == '/')
                     {
-                        if (Face.Position > 0)
-                        {
-                            Vertex->Position = PositionBuffer[Face.Position - 1];
-                        }
+                        ++FileBuffer.At;
 
-                        if (Face.Texture > 0)
+                        if (PeekBuffer(&FileBuffer) != '/')
                         {
-                            Vertex->Texture  = TextureBuffer[Face.Texture - 1];
-                        }
-
-                        if (Face.Normal > 0)
-                        {
-                            Vertex->Normal  = NormalBuffer[Face.Normal - 1];
-                        }
-
-                        obj_submesh_node *SubmeshNode = State.MeshNode->Value.Submeshes.Last;
-                        if (SubmeshNode)
-                        {
-                            if (!SubmeshNode->Value.VertexBuffer)
+                            int TextureIndex = (int)ParseToNumber(&FileBuffer);
+                            if (TextureIndex > 0)
                             {
-                                SubmeshNode->Value.VertexBuffer = Vertex;
+                                Vertex->TextureIndex = TextureIndex - 1;
                             }
+                        }
 
-                            SubmeshNode->Value.VertexBufferSize += 1;
-                        }
-                        else
+                        if (PeekBuffer(&FileBuffer) == '/')
                         {
-                            assert(!"Invalid State");
+                            ++FileBuffer.At;
+
+                            int NormalIndex = (int)ParseToNumber(&FileBuffer);
+                            if (NormalIndex > 0)
+                            {
+                                Vertex->NormalIndex = NormalIndex - 1;
+                            }
                         }
-                    }
-                    else
-                    {
-                        assert(!"OUT OF MEMORY");
-                    }
+                    }      
                 }
 
-                // TODO: Maybe triangulate? I think we need a bit more processing to be correct.
+                // 1 --  2
+                // |     |
+                // |     |
+                // |     |
+                // |     |
+                // 0 --- 3
+
+                // 1 --  2
+                // |    /|
+                // |   / |
+                // |  /  |
+                // | /   |
+                // 0 --- 3
+
+                // 0, 1, 2 : Triangle0
+                // 0, 2, 3 : Triangle1
+
+                obj_submesh_node *Current = MeshList->Last->Value.Submeshes.Last;
+                if (Current && VertexCountInLine >= 3)
+                {
+                    for (uint32_t Idx = 1; Idx < VertexCountInLine - 1; ++Idx)
+                    {
+                        VertexBuffer[VertexCount++] = ParsedVertices[0];
+                        VertexBuffer[VertexCount++] = ParsedVertices[Idx];
+                        VertexBuffer[VertexCount++] = ParsedVertices[Idx + 1];
+
+                        Current->Value.VertexCount += 3;
+                    }
+
+                }
+                else
+                {
+                    assert(!"INVALID PARSER STATE");
+                }
             } break;
 
             case 'o':
             {
-                SkipWhitespaces(&Buffer);
+                SkipWhitespaces(&FileBuffer);
 
-                // Really unsure. Because this clears the output which we might not want.
-                // This whole parser state is weird. Kind of unsure.
-                ClearParserState(&State);
-
-                State.MeshNode = PushStruct(State.OutputArena, obj_mesh_node);
-                if (State.MeshNode)
+                obj_mesh_node *MeshNode = PushStruct(ParseArena, obj_mesh_node);
+                if (MeshNode)
                 {
-                    State.MeshNode->Next = 0;
-                    State.MeshNode->Value.Submeshes.First = 0;
-                    State.MeshNode->Value.Submeshes.Last  = 0;
-                    State.MeshNode->Value.Submeshes.Count = 0;
+                    MeshNode->Next = 0;
+                    MeshNode->Value.Submeshes.First = 0;
+                    MeshNode->Value.Submeshes.Last  = 0;
+                    MeshNode->Value.Submeshes.Count = 0;
 
                     if (!MeshList->First)
                     {
-                        MeshList->First = State.MeshNode;
-                        MeshList->Last  = State.MeshNode;
+                        MeshList->First = MeshNode;
+                        MeshList->Last  = MeshNode;
+                    }
+                    else if(MeshList->Last)
+                    {
+                        MeshList->Last->Next = MeshNode;
+                        MeshList->Last       = MeshNode;
                     }
                     else
                     {
-                        MeshList->Last->Next = State.MeshNode;
-                        MeshList->Last       = State.MeshNode;
+                        assert(!"INVALID PARSER STATE");
                     }
+
                     ++MeshList->Count;
                     
-                    while (!IsNewLine(PeekBuffer(&Buffer)))
+                    // TODO: Do we care about the name?
+                    while (!IsNewLine(PeekBuffer(&FileBuffer)))
                     {
-                        ++Buffer.At;
+                        ++FileBuffer.At;
                     }
                 }
                 else
@@ -836,21 +840,23 @@ ParseObjFromFile(byte_string Path)
             case 'u':
             {
                 byte_string Rest = ByteStringLiteral("semtl");
-                if (BufferStartsWith(Rest, &Buffer))
+                if (BufferStartsWith(Rest, &FileBuffer))
                 {
-                    Buffer.At += Rest.Size;
-                    SkipWhitespaces(&Buffer);
+                    FileBuffer.At += Rest.Size;
+                    SkipWhitespaces(&FileBuffer);
 
-                    byte_string       MtlName     = ParseToIdentifier(&Buffer);
-                    obj_submesh_node *SubmeshNode = PushStruct(State.OutputArena, obj_submesh_node);
-                    if (IsValidByteString(MtlName) && SubmeshNode && State.MeshNode)
+                    byte_string       MtlName     = ParseToIdentifier(&FileBuffer);
+                    obj_submesh_node *SubmeshNode = PushStruct(ParseArena, obj_submesh_node);
+                    if (IsValidByteString(MtlName) && SubmeshNode && MeshList->Last)
                     {
-                        SubmeshNode->Next = 0;
-                        SubmeshNode->Value.Material         = FindMaterial(MtlName, State.MaterialList);
-                        SubmeshNode->Value.VertexBuffer     = 0;
-                        SubmeshNode->Value.VertexBufferSize = 0;
+                        ++TotalSubmeshCount;
 
-                        obj_submesh_list *List = &State.MeshNode->Value.Submeshes;
+                        SubmeshNode->Next = 0;
+                        SubmeshNode->Value.Material    = FindMaterial(MtlName, MaterialList);
+                        SubmeshNode->Value.VertexCount = 0;
+                        SubmeshNode->Value.VertexStart = VertexCount;
+
+                        obj_submesh_list *List = &MeshList->Last->Value.Submeshes;
                         if (!List->First)
                         {
                             List->First = SubmeshNode;
@@ -863,8 +869,9 @@ ParseObjFromFile(byte_string Path)
                         }
                         else
                         {
-                            assert(!"INVALID STATE");
+                            assert(!"INVALID PARSER STATE");
                         }
+
                         ++List->Count;
                     }
                     else
@@ -877,44 +884,38 @@ ParseObjFromFile(byte_string Path)
             case 'm':
             {
                 byte_string Rest = ByteStringLiteral("tllib");
-                if (BufferStartsWith(Rest, &Buffer))
+                if (BufferStartsWith(Rest, &FileBuffer))
                 {
-                    Buffer.Data += Rest.Size;
-                    SkipWhitespaces(&Buffer);
+                    FileBuffer.At += Rest.Size;
+                    SkipWhitespaces(&FileBuffer);
 
-                    byte_string LibName = ParseToIdentifier(&Buffer);
-                    byte_string Lib     = ReplaceFileName(Path, LibName, State.ParseArena);
+                    byte_string LibName = ParseToIdentifier(&FileBuffer);
+                    byte_string Lib     = ReplaceFileName(Path, LibName, ParseArena);
 
-                    for (obj_material_node *Node = ParseMTLFromFile(Lib, State.ParseArena); Node != 0; Node = Node->Next)
+                    for (obj_material_node *Node = ParseMTLFromFile(Lib, &StringFootprint, ParseArena); Node != 0; Node = Node->Next)
                     {
-                        if (!State.MaterialList)
-                        {
-                            State.MaterialList = PushStruct(State.ParseArena, obj_material_list);
-                        }
-
-                        obj_material_list *MaterialList = State.MaterialList;
                         if (MaterialList)
                         {
                             if (!MaterialList->First)
                             {
                                 MaterialList->First = Node;
-                                MaterialList->Last  = Node;
+                                MaterialList->Last = Node;
                             }
-                            else if(MaterialList->Last)
+                            else if (MaterialList->Last)
                             {
                                 MaterialList->Last->Next = Node;
-                                MaterialList->Last       = Node;
+                                MaterialList->Last = Node;
                             }
                             else
                             {
-                                assert(!"INVALID STATE");
+                                assert(!"INVALID PARSER STATE");
                             }
 
                             ++MaterialList->Count;
                         }
                         else
                         {
-                            assert(!"OUT OF MEMORY");
+                            assert(!"INVALID PARSER STATE");
                         }
                     }
                 }
@@ -922,22 +923,85 @@ ParseObjFromFile(byte_string Path)
                 {
                     assert(!"INVALID TOKEN");
                 }
-            }
+            } break;
 
             case '#':
             case 's':
             case 'g':
             {
-                while (IsBufferInBounds(&Buffer) && !IsNewLine(PeekBuffer(&Buffer)))
+                while (IsBufferInBounds(&FileBuffer) && !IsNewLine(PeekBuffer(&FileBuffer)))
                 {
-                    ++Buffer.At;
+                    ++FileBuffer.At;
                 }
             } break;
 
-            case '\r':
             case '\n':
             {
-                ++Buffer.At;
+                // No-Op
+            } break;
+
+            case '\0':
+            {
+                uint64_t VertexDataSize   = VertexCount         * sizeof(mesh_vertex_data);
+                uint64_t SubmeshDataSize  = TotalSubmeshCount   * sizeof(submesh_data);
+                uint64_t MaterialDataSize = MaterialList->Count * sizeof(material_data);
+
+                // TODO: Should allocate from a backing buffer.
+                uint64_t            Footprint = VertexDataSize + SubmeshDataSize + MaterialDataSize + StringFootprint;
+                memory_arena_params Params =
+                {
+                    .AllocatedFromFile = __FILE__,
+                    .AllocatedFromLine = __LINE__,
+                    .ReserveSize       = Footprint,
+                    .CommitSize        = Footprint,
+                };
+
+                memory_arena *OutputArena = AllocateArena(Params);
+                if (OutputArena)
+                {
+                    MeshData.Vertices      = PushArray(OutputArena, mesh_vertex_data, VertexCount);
+                    MeshData.VertexCount   = 0;
+                    MeshData.Submeshes     = PushArray(OutputArena, submesh_data, TotalSubmeshCount);
+                    MeshData.SubmeshCount  = 0;
+                    MeshData.Materials     = PushArray(OutputArena, material_data, MaterialList->Count);
+                    MeshData.MaterialCount = 0;
+
+                    for (obj_mesh_node *MeshNode = MeshList->First; MeshNode != 0; MeshNode = MeshNode->Next)
+                    {
+                        obj_mesh Mesh = MeshNode->Value;
+
+                        for (obj_submesh_node *SubmeshNode = Mesh.Submeshes.First; SubmeshNode != 0; SubmeshNode = SubmeshNode->Next)
+                        {
+                            obj_submesh Submesh  = SubmeshNode->Value;
+                            obj_vertex *Vertices = VertexBuffer + Submesh.VertexStart;
+
+                            for (uint32_t Idx = 0; Idx < Submesh.VertexCount; ++Idx)
+                            {
+                                vec3 Position = PositionBuffer[Vertices[Idx].PositionIndex];
+                                vec2 Texture  = TextureBuffer[Vertices[Idx].TextureIndex];
+                                vec3 Normal   = NormalBuffer[Vertices[Idx].NormalIndex];
+
+                                MeshData.Vertices[MeshData.VertexCount++] = (mesh_vertex_data){.Position = Position, .Texture = Texture, .Normal = Normal};
+                            }
+
+                            submesh_data *SubmeshData = MeshData.Submeshes + MeshData.SubmeshCount++;
+                            SubmeshData->MaterialId = 0;                     // What is this?
+                            SubmeshData->Name         = ByteString(0, 0);    // Issue with footprint? Has to be string CPY. Does this even matter?
+                            SubmeshData->VertexCount  = Submesh.VertexCount; // How many vertices for this mesh.
+                            SubmeshData->VertexOffset = Submesh.VertexStart; // Index into MeshData.Vertices (is this correct? Don't even have to track it)
+                        }
+                    }
+
+                    for (obj_material_node *MaterialNode = MaterialList->First; MaterialNode != 0; MaterialNode = MaterialNode->Next)
+                    {
+                        material_data *MaterialData = MeshData.Materials + MeshData.MaterialCount++;
+                        MaterialData->ColorTexture     = ByteStringCopy(MaterialNode->Value.ColorTexture    , OutputArena);
+                        MaterialData->NormalTexture    = ByteStringCopy(MaterialNode->Value.NormalTexture   , OutputArena);
+                        MaterialData->RoughnessTexture = ByteStringCopy(MaterialNode->Value.RoughnessTexture, OutputArena);
+                        MaterialData->Opacity          = MaterialNode->Value.Opacity;
+                        MaterialData->Shininess        = MaterialNode->Value.Shininess;
+                    }
+                }
             } break;
 
             default:
@@ -947,7 +1011,7 @@ ParseObjFromFile(byte_string Path)
 
             }
         }
-
-        // assert(!"Handle the rest.");
     }
+
+    return MeshData;
 }

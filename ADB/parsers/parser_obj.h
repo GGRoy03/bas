@@ -1,5 +1,10 @@
 #pragma once
 
-#include "../utilities.h"
+#include "utilities.h"
+#include "engine/rendering/assets.h"
 
-void ParseObjFromFile(byte_string Path);
+
+// ONCE WE HAVE SOME INTERMEDIARY FORMAT WE CAN STOP EXPOSING THESE TYPES.
+
+
+mesh_data ParseObjFromFile(byte_string Path);
