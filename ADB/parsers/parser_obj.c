@@ -1,9 +1,10 @@
 #pragma once
 
 // TODO:
-// 1) Threaded Texture IO
-// 2) Figure out memory stuff
-// 3) Write to IF and pull the specific types in.
+// 0) Decouple materials from meshes
+// 1) Vertex Elimination (Agnostic)
+// 2) Index  Buffer Gen
+// 3) Error Reporting + Robustness
 
 #include <stdint.h>
 #include <assert.h>
@@ -14,250 +15,7 @@
 
 #include "../utilities.h"
 #include "parser_obj.h"
-
-#define STB_IMAGE_IMPLEMENTATION
-#include "third_party/stb_image.h"
-
-typedef struct
-{
-    uint8_t *Data;
-    size_t   Size;
-    size_t   At;
-} buffer;
-
-
-static bool
-IsBufferValid(buffer *Buffer)
-{
-    bool Result = (Buffer && Buffer->Data && Buffer->Size);
-    return Result;
-}
-
-
-static bool
-IsBufferInBounds(buffer *Buffer)
-{
-    assert(IsBufferValid(Buffer));
-
-    bool Result = Buffer->At < Buffer->Size;
-    return Result;
-}
-
-static uint8_t
-GetNextToken(buffer *Buffer)
-{
-    assert(IsBufferValid(Buffer) && IsBufferInBounds(Buffer));
-
-    uint8_t Result = Buffer->Data[Buffer->At++];
-    return Result;
-}
-
-
-static uint8_t
-PeekBuffer(buffer *Buffer)
-{
-    assert(IsBufferValid(Buffer) && IsBufferInBounds(Buffer));
-
-    uint8_t Result = Buffer->Data[Buffer->At];
-    return Result;
-}
-
-
-static bool
-IsNewLine(uint8_t Token)
-{
-    bool Result = Token == '\n';
-    return Result;
-}
-
-
-static bool
-IsWhiteSpace(uint8_t Token)
-{
-    bool Result = Token == ' ' || Token == '\t' || Token == '\r';
-    return Result;
-}
-
-
-static buffer
-ReadFileInBuffer(byte_string Path, memory_arena *Arena)
-{
-    buffer Result = {0};
-
-    if (IsValidByteString(Path))
-    {
-        FILE *File = fopen((const char *)Path.Data, "rb");
-        if (File)
-        {
-            fseek(File, 0, SEEK_END);
-            long FileSize = ftell(File);
-            fseek(File, 0, SEEK_SET);
-        
-            if (FileSize > 0)
-            {
-                uint8_t *Buffer = PushArray(Arena, uint8_t, FileSize + 1);
-                if (Buffer)
-                {
-                    size_t BytesRead = fread(Buffer, 1, (size_t)FileSize, File);
-        
-                    Result.Data       = Buffer;
-                    Result.At         = 0;
-                    Result.Size       = FileSize + 1;
-                    Buffer[BytesRead] = '\0';
-                }
-            }
-        
-            fclose(File);
-        }
-    }
-
-    return Result;
-}
-
-
-static void
-SkipWhitespaces(buffer *Buffer)
-{
-    assert(IsBufferValid(Buffer));
-
-    while (IsBufferInBounds(Buffer) && IsWhiteSpace(PeekBuffer(Buffer)))
-    {
-        ++Buffer->At;
-    }
-}
-
-
-static float
-ParseToSign(buffer *Buffer)
-{
-    float Result = 1.f;
-
-    if (IsBufferInBounds(Buffer) && PeekBuffer(Buffer) ==  '-')
-    {
-        Result = -1.f;
-        ++Buffer->At;
-    }
-
-    return Result;
-}
-
-
-static float
-ParseToNumber(buffer *Buffer)
-{
-    assert(IsBufferValid(Buffer));
-
-    float Result = 0.f;
-
-    while (IsBufferInBounds(Buffer))
-    {
-        uint8_t Token    = GetNextToken(Buffer);
-        uint8_t AsNumber = Token - (uint8_t)'0';
-
-        if (AsNumber < 10)
-        {
-            Result = 10.f * Result + (float)AsNumber;
-        }
-        else
-        {
-            --Buffer->At;
-            break;
-        }
-    }
-
-    return Result;
-}
-
-
-static float
-ParseToFloat(buffer *Buffer)
-{
-    assert(IsBufferValid(Buffer));
-
-    float Result = 0.f;
-
-    float Sign   = ParseToSign(Buffer);
-    float Number = ParseToNumber(Buffer);
-
-    if (IsBufferInBounds(Buffer) && PeekBuffer(Buffer) ==  '.')
-    {
-        ++Buffer->At;
-
-        float C = 1.f / 10.f;
-        while (IsBufferInBounds(Buffer))
-        {
-            uint8_t AsNumber = Buffer->Data[Buffer->At] - (uint8_t)'0';
-            if (AsNumber < 10)
-            {
-                Number = Number + C * (float)AsNumber;
-                C     *= 1.f / 10.f;
-
-                ++Buffer->At;
-            }
-            else
-            {
-                break;
-            }
-        }
-    }
-
-    if (IsBufferInBounds(Buffer) && PeekBuffer(Buffer) == 'e' || PeekBuffer(Buffer) == 'E')
-    {
-        ++Buffer->At;
-
-        if (IsBufferInBounds(Buffer) && PeekBuffer(Buffer) == '+')
-        {
-            ++Buffer->At;
-        }
-
-        float ExponentSign = ParseToSign(Buffer);
-        float Exponent     = ExponentSign * ParseToFloat(Buffer);
-
-        Number *= powf(10.f, Exponent);
-    }
-
-    Result = Sign * Number;
-
-    return Result;
-}
-
-
-static byte_string
-ParseToIdentifier(buffer *Buffer)
-{
-    assert(IsBufferValid(Buffer));
-
-    byte_string Result = ByteString(Buffer->Data + Buffer->At, 0);
-
-    while (IsBufferInBounds(Buffer) && !IsNewLine(PeekBuffer(Buffer)) && !IsWhiteSpace(PeekBuffer(Buffer)))
-    {
-        Result.Size += 1;
-        Buffer->At  += 1;
-    }
-
-    return Result;
-}
-
-
-static bool
-BufferStartsWith(byte_string String, buffer *Buffer)
-{
-    bool Result = true;
-
-    if (IsValidByteString(String) && IsBufferValid(Buffer) && Buffer->At + String.Size < Buffer->Size)
-    {
-        for (uint64_t Idx = 0; Idx < String.Size; ++Idx)
-        {
-            if (Buffer->Data[Buffer->At + Idx] != (uint8_t)String.Data[Idx])
-            {
-                Result = false;
-                break;
-            }
-        }
-    }
-
-    return Result;
-}
+#include "platform/platform.h"
 
 
 // ==============================================
@@ -280,17 +38,17 @@ typedef struct
 
 typedef struct
 {
-    byte_string Name;
-    obj_color   Diffuse;
-    obj_color   Ambient;
-    obj_color   Specular;
-    obj_color   Emissive;
-    float       Shininess;
-    float       Opacity;
+    byte_string    Name;
+    obj_color      Diffuse;
+    obj_color      Ambient;
+    obj_color      Specular;
+    obj_color      Emissive;
+    float          Shininess;
+    float          Opacity;
 
-    byte_string ColorTexture;
-    byte_string NormalTexture;
-    byte_string RoughnessTexture;
+    loaded_texture ColorTexture;
+    loaded_texture NormalTexture;
+    loaded_texture RoughnessTexture;
 } obj_material;
 
 
@@ -332,12 +90,12 @@ FindMaterial(byte_string Name, obj_material_list *List)
 
 
 static obj_material_node *
-ParseMTLFromFile(byte_string Path, uint32_t *StringFootprint, memory_arena *ParseArena)
+ParseMTLFromFile(byte_string Path, uint32_t *StringFootprint, engine_memory *EngineMemory)
 {
     obj_material_node *First = 0;
     obj_material_node *Last  = 0;
 
-    buffer FileBuffer = ReadFileInBuffer(Path, ParseArena);
+    buffer FileBuffer = ReadFileInBuffer(Path, EngineMemory->FrameMemory);
 
     if (IsBufferValid(&FileBuffer))
     {
@@ -358,18 +116,17 @@ ParseMTLFromFile(byte_string Path, uint32_t *StringFootprint, memory_arena *Pars
                 byte_string Rest = ByteStringLiteral("ewmtl");
                 if (BufferStartsWith(Rest, &FileBuffer))
                 {
-                    FileBuffer.At += Rest.Size;
                     SkipWhitespaces(&FileBuffer);
 
                     byte_string MtlName = ParseToIdentifier(&FileBuffer);
                     if (IsValidByteString(MtlName))
                     {
                         // Shouldn't we push into the output arena?
-                        obj_material_node *Node = PushStruct(ParseArena, obj_material_node);
+                        obj_material_node *Node = PushStruct(EngineMemory->FrameMemory, obj_material_node);
                         if (Node)
                         {
                             Node->Next = 0;
-                            Node->Value.Name = ByteStringCopy(MtlName, ParseArena);
+                            Node->Value.Name = ByteStringCopy(MtlName, EngineMemory->FrameMemory);
                             // Node->Value.Ambient   = {0, 0, 0};
                             // Node->Value.Diffuse   = {0, 0, 0};
                             // Node->Value.Specular  = {0};
@@ -438,51 +195,48 @@ ParseMTLFromFile(byte_string Path, uint32_t *StringFootprint, memory_arena *Pars
                 }
             } break;
 
-            // TODO: Remove the loading from here.
             case 'm':
             {
-                byte_string Rest = ByteStringLiteral("ap");
-                if (BufferStartsWith(Rest, &FileBuffer) && Last)
+                texture_to_load *ToLoad = PushStruct(EngineMemory->FrameMemory, texture_to_load);
+
+                if (Last && ToLoad)
                 {
-                    FileBuffer.At += Rest.Size;
-                    SkipWhitespaces(&FileBuffer);
-
-                    byte_string NormalMap    = ByteStringLiteral("_Bump");
-                    byte_string ColorMap     = ByteStringLiteral("_Kd");
-                    byte_string RoughnessMap = ByteStringLiteral("_Ns");
-
-                    byte_string *TextureName = 0;
-
+                    byte_string NormalMap    = ByteStringLiteral("ap_Bump");
+                    byte_string ColorMap     = ByteStringLiteral("ap_Kd");
+                    byte_string RoughnessMap = ByteStringLiteral("ap_Ns");
+                    
                     if (BufferStartsWith(NormalMap, &FileBuffer))
                     {
-                        FileBuffer.At += NormalMap.Size;
-                        TextureName    = &Last->Value.NormalTexture;
+                        ToLoad->Output = &Last->Value.NormalTexture;
+                        ToLoad->Id     = 0;
                     }
                     else if (BufferStartsWith(ColorMap, &FileBuffer))
                     {
-                        FileBuffer.At += ColorMap.Size;
-                        TextureName    = &Last->Value.ColorTexture;
+                        ToLoad->Output = &Last->Value.ColorTexture;
+                        ToLoad->Id     = 1;
                     }
                     else if (BufferStartsWith(RoughnessMap, &FileBuffer))
                     {
-                        FileBuffer.At += RoughnessMap.Size;
-                        TextureName    = &Last->Value.RoughnessTexture;
+                        ToLoad->Output = &Last->Value.RoughnessTexture;
+                        ToLoad->Id     = 2;
                     }
                     else
                     {
                         assert(!"INVALID TOKEN");
                     }
-
+                    
                     SkipWhitespaces(&FileBuffer);
-
-                    // But we need to know the size of the string, because it counts in the footprint.
-                    if (TextureName)
-                    {
-                        byte_string Name = ParseToIdentifier(&FileBuffer);
-
-                        StringFootprint += Name.Size;
-                        *TextureName     = Name;
-                    }
+                    
+                    byte_string TextureName = ParseToIdentifier(&FileBuffer);
+                    byte_string TexturePath = ReplaceFileName(Path, TextureName, EngineMemory->FrameMemory);
+                    
+                    ToLoad->FileContent = ReadFileInBuffer(TexturePath, EngineMemory->FrameMemory);
+                    
+                    EngineMemory->AddEntry(EngineMemory->WorkQueue, LoadTextureFromDisk, ToLoad);
+                }
+                else
+                {
+                    assert(!"INVALID PARSER STATE");
                 }
             }
 
@@ -600,52 +354,30 @@ typedef struct
 #define MAX_ATTRIBUTE_PER_FILE 1'000'000
 
 
-mesh_data
-ParseObjFromFile(byte_string Path)
+asset_file_data
+ParseObjFromFile(byte_string Path, engine_memory *EngineMemory)
 {
-    mesh_data MeshData = {0};
+    asset_file_data MeshData = {0};
 
     // Initialize the parsing state
     // (May be abstracted to reduce memory allocs when parsing a sequence of files.)
 
-    buffer             FileBuffer        = {0};
-    vec3              *PositionBuffer    = 0;
+    obj_mesh_list     *MeshList          = PushStruct(EngineMemory->FrameMemory, obj_mesh_list);
+    obj_material_list *MaterialList      = PushStruct(EngineMemory->FrameMemory, obj_material_list);
+    buffer             FileBuffer        = ReadFileInBuffer(Path, EngineMemory->FrameMemory);
+    vec3              *PositionBuffer    = PushArray(EngineMemory->FrameMemory, vec3, MAX_ATTRIBUTE_PER_FILE);
     uint32_t           PositionCount     = 0;
-    vec3              *NormalBuffer      = 0;
+    vec3              *NormalBuffer      = PushArray(EngineMemory->FrameMemory, vec3, MAX_ATTRIBUTE_PER_FILE);
     uint32_t           NormalCount       = 0;
-    vec2              *TextureBuffer     = 0;
+    vec2              *TextureBuffer     = PushArray(EngineMemory->FrameMemory, vec2, MAX_ATTRIBUTE_PER_FILE);
     uint32_t           TextureCount      = 0;
-    obj_vertex        *VertexBuffer      = 0;
+    obj_vertex        *VertexBuffer      = PushArray(EngineMemory->FrameMemory, obj_vertex, MAX_ATTRIBUTE_PER_FILE);
     uint32_t           VertexCount       = 0;
     uint32_t           TotalSubmeshCount = 0;
-    obj_mesh_list     *MeshList          = 0;
-    obj_material_list *MaterialList      = 0;
     uint64_t           StringFootprint   = 0;
-    memory_arena      *ParseArena        = {0};
-    {
-        memory_arena_params Params =
-        {
-            .AllocatedFromFile = __FILE__,
-            .AllocatedFromLine = __LINE__,
-            .CommitSize        = MiB(64),
-            .ReserveSize       = GiB(1),
-        };
 
-        ParseArena = AllocateArena(Params);
 
-        if (ParseArena)
-        {
-             MeshList       = PushStruct(ParseArena, obj_mesh_list);
-             MaterialList   = PushStruct(ParseArena, obj_material_list);
-             FileBuffer     = ReadFileInBuffer(Path, ParseArena);
-             PositionBuffer = PushArray(ParseArena, vec3      , MAX_ATTRIBUTE_PER_FILE);
-             NormalBuffer   = PushArray(ParseArena, vec3      , MAX_ATTRIBUTE_PER_FILE);
-             TextureBuffer  = PushArray(ParseArena, vec2      , MAX_ATTRIBUTE_PER_FILE);
-             VertexBuffer   = PushArray(ParseArena, obj_vertex, MAX_ATTRIBUTE_PER_FILE);
-        }
-    }
-
-    if (IsBufferValid(&FileBuffer) && PositionBuffer && NormalBuffer && TextureBuffer && VertexBuffer && MeshList && MaterialList && ParseArena)
+    if (IsBufferValid(&FileBuffer) && PositionBuffer && NormalBuffer && TextureBuffer && VertexBuffer && MeshList && MaterialList && EngineMemory->FrameMemory)
     {
         while (IsBufferValid(&FileBuffer) && IsBufferInBounds(&FileBuffer))
         {
@@ -800,7 +532,7 @@ ParseObjFromFile(byte_string Path)
             {
                 SkipWhitespaces(&FileBuffer);
 
-                obj_mesh_node *MeshNode = PushStruct(ParseArena, obj_mesh_node);
+                obj_mesh_node *MeshNode = PushStruct(EngineMemory->FrameMemory, obj_mesh_node);
                 if (MeshNode)
                 {
                     MeshNode->Next = 0;
@@ -842,11 +574,10 @@ ParseObjFromFile(byte_string Path)
                 byte_string Rest = ByteStringLiteral("semtl");
                 if (BufferStartsWith(Rest, &FileBuffer))
                 {
-                    FileBuffer.At += Rest.Size;
                     SkipWhitespaces(&FileBuffer);
 
                     byte_string       MtlName     = ParseToIdentifier(&FileBuffer);
-                    obj_submesh_node *SubmeshNode = PushStruct(ParseArena, obj_submesh_node);
+                    obj_submesh_node *SubmeshNode = PushStruct(EngineMemory->FrameMemory, obj_submesh_node);
                     if (IsValidByteString(MtlName) && SubmeshNode && MeshList->Last)
                     {
                         ++TotalSubmeshCount;
@@ -886,13 +617,12 @@ ParseObjFromFile(byte_string Path)
                 byte_string Rest = ByteStringLiteral("tllib");
                 if (BufferStartsWith(Rest, &FileBuffer))
                 {
-                    FileBuffer.At += Rest.Size;
                     SkipWhitespaces(&FileBuffer);
 
                     byte_string LibName = ParseToIdentifier(&FileBuffer);
-                    byte_string Lib     = ReplaceFileName(Path, LibName, ParseArena);
+                    byte_string Lib     = ReplaceFileName(Path, LibName, EngineMemory->FrameMemory);
 
-                    for (obj_material_node *Node = ParseMTLFromFile(Lib, &StringFootprint, ParseArena); Node != 0; Node = Node->Next)
+                    for (obj_material_node *Node = ParseMTLFromFile(Lib, &StringFootprint, EngineMemory); Node != 0; Node = Node->Next)
                     {
                         if (MaterialList)
                         {
@@ -942,6 +672,9 @@ ParseObjFromFile(byte_string Path)
 
             case '\0':
             {
+                // Wait on all the threaded work we enqueued.
+                EngineMemory->CompleteWork(EngineMemory->WorkQueue);
+
                 uint64_t VertexDataSize   = VertexCount         * sizeof(mesh_vertex_data);
                 uint64_t SubmeshDataSize  = TotalSubmeshCount   * sizeof(submesh_data);
                 uint64_t MaterialDataSize = MaterialList->Count * sizeof(material_data);
@@ -995,9 +728,9 @@ ParseObjFromFile(byte_string Path)
                     for (obj_material_node *MaterialNode = MaterialList->First; MaterialNode != 0; MaterialNode = MaterialNode->Next)
                     {
                         material_data *MaterialData = MeshData.Materials + MeshData.MaterialCount++;
-                        MaterialData->ColorTexture     = ByteStringCopy(MaterialNode->Value.ColorTexture    , OutputArena);
-                        MaterialData->NormalTexture    = ByteStringCopy(MaterialNode->Value.NormalTexture   , OutputArena);
-                        MaterialData->RoughnessTexture = ByteStringCopy(MaterialNode->Value.RoughnessTexture, OutputArena);
+                        MaterialData->ColorTexture     = MaterialNode->Value.ColorTexture;
+                        MaterialData->NormalTexture    = MaterialNode->Value.NormalTexture;
+                        MaterialData->RoughnessTexture = MaterialNode->Value.RoughnessTexture;
                         MaterialData->Opacity          = MaterialNode->Value.Opacity;
                         MaterialData->Shininess        = MaterialNode->Value.Shininess;
                     }

@@ -4,7 +4,5 @@
 #include "engine/rendering/assets.h"
 
 
-// ONCE WE HAVE SOME INTERMEDIARY FORMAT WE CAN STOP EXPOSING THESE TYPES.
-
-
-mesh_data ParseObjFromFile(byte_string Path);
+typedef struct engine_memory engine_memory;
+asset_file_data ParseObjFromFile(byte_string Path, engine_memory *EngineMemory);
