@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdio.h>
 
 // ==============================================
 // <Utility Macros>
@@ -15,6 +16,8 @@
 
 #define Minimum(A,B) (((A)<(B))?(A):(B))
 #define Maximum(A,B) (((A)>(B))?(A):(B))
+
+#define ArrayCount(a) (sizeof(a) / sizeof(a[0]))
 
 // ==============================================
 // <Memory Arenas>
@@ -85,3 +88,33 @@ bool        ByteStringCompare  (byte_string A, byte_string B);
 byte_string ByteStringCopy     (byte_string Input, memory_arena *Arena);
 
 byte_string ReplaceFileName    (byte_string Path, byte_string Name, memory_arena *Arena);
+
+
+// ==============================================
+// <Buffer>
+// ==============================================
+
+typedef struct
+{
+    uint8_t *Data;
+    size_t   Size;
+    size_t   At;
+} buffer;
+
+
+bool        IsBufferValid      (buffer *Buffer);
+bool        IsBufferInBounds   (buffer *Buffer);
+
+buffer      ReadFileInBuffer   (byte_string Path, memory_arena *Arena);
+uint8_t     GetNextToken       (buffer *Buffer);
+uint8_t     PeekBuffer         (buffer *Buffer);
+void        SkipWhitespaces    (buffer *Buffer);
+
+float       ParseToSign        (buffer *Buffer);
+float       ParseToNumber      (buffer *Buffer);
+float       ParseToFloat       (buffer *Buffer);
+byte_string ParseToIdentifier  (buffer *Buffer);
+
+bool        IsNewLine          (uint8_t Token);
+bool        IsWhiteSpace       (uint8_t Token);
+bool        BufferStartsWith   (byte_string String, buffer *Buffer);

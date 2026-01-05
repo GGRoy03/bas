@@ -265,3 +265,247 @@ ReplaceFileName(byte_string Path, byte_string Name, memory_arena *Arena)
 
     return Result;
 }
+
+
+// ==============================================
+// <Buffer>
+// ==============================================
+
+
+bool
+IsBufferValid(buffer *Buffer)
+{
+    bool Result = (Buffer && Buffer->Data && Buffer->Size);
+    return Result;
+}
+
+
+bool
+IsBufferInBounds(buffer *Buffer)
+{
+    assert(IsBufferValid(Buffer));
+
+    bool Result = Buffer->At < Buffer->Size;
+    return Result;
+}
+
+uint8_t
+GetNextToken(buffer *Buffer)
+{
+    assert(IsBufferValid(Buffer) && IsBufferInBounds(Buffer));
+
+    uint8_t Result = Buffer->Data[Buffer->At++];
+    return Result;
+}
+
+
+uint8_t
+PeekBuffer(buffer *Buffer)
+{
+    assert(IsBufferValid(Buffer) && IsBufferInBounds(Buffer));
+
+    uint8_t Result = Buffer->Data[Buffer->At];
+    return Result;
+}
+
+
+bool
+IsNewLine(uint8_t Token)
+{
+    bool Result = Token == '\n';
+    return Result;
+}
+
+
+bool
+IsWhiteSpace(uint8_t Token)
+{
+    bool Result = Token == ' ' || Token == '\t' || Token == '\r';
+    return Result;
+}
+
+
+buffer
+ReadFileInBuffer(byte_string Path, memory_arena *Arena)
+{
+    buffer Result = {0};
+
+    if (IsValidByteString(Path))
+    {
+        FILE *File = fopen((const char *)Path.Data, "rb");
+        if (File)
+        {
+            fseek(File, 0, SEEK_END);
+            long FileSize = ftell(File);
+            fseek(File, 0, SEEK_SET);
+        
+            if (FileSize > 0)
+            {
+                uint8_t *Buffer = PushArray(Arena, uint8_t, FileSize + 1);
+                if (Buffer)
+                {
+                    size_t BytesRead = fread(Buffer, 1, (size_t)FileSize, File);
+        
+                    Result.Data       = Buffer;
+                    Result.At         = 0;
+                    Result.Size       = FileSize + 1;
+                    Buffer[BytesRead] = '\0';
+                }
+            }
+        
+            fclose(File);
+        }
+    }
+
+    return Result;
+}
+
+
+void
+SkipWhitespaces(buffer *Buffer)
+{
+    assert(IsBufferValid(Buffer));
+
+    while (IsBufferInBounds(Buffer) && IsWhiteSpace(PeekBuffer(Buffer)))
+    {
+        ++Buffer->At;
+    }
+}
+
+
+float
+ParseToSign(buffer *Buffer)
+{
+    float Result = 1.f;
+
+    if (IsBufferInBounds(Buffer) && PeekBuffer(Buffer) ==  '-')
+    {
+        Result = -1.f;
+        ++Buffer->At;
+    }
+
+    return Result;
+}
+
+
+float
+ParseToNumber(buffer *Buffer)
+{
+    assert(IsBufferValid(Buffer));
+
+    float Result = 0.f;
+
+    while (IsBufferInBounds(Buffer))
+    {
+        uint8_t Token    = GetNextToken(Buffer);
+        uint8_t AsNumber = Token - (uint8_t)'0';
+
+        if (AsNumber < 10)
+        {
+            Result = 10.f * Result + (float)AsNumber;
+        }
+        else
+        {
+            --Buffer->At;
+            break;
+        }
+    }
+
+    return Result;
+}
+
+
+float
+ParseToFloat(buffer *Buffer)
+{
+    assert(IsBufferValid(Buffer));
+
+    float Result = 0.f;
+
+    float Sign   = ParseToSign(Buffer);
+    float Number = ParseToNumber(Buffer);
+
+    if (IsBufferInBounds(Buffer) && PeekBuffer(Buffer) ==  '.')
+    {
+        ++Buffer->At;
+
+        float C = 1.f / 10.f;
+        while (IsBufferInBounds(Buffer))
+        {
+            uint8_t AsNumber = Buffer->Data[Buffer->At] - (uint8_t)'0';
+            if (AsNumber < 10)
+            {
+                Number = Number + C * (float)AsNumber;
+                C     *= 1.f / 10.f;
+
+                ++Buffer->At;
+            }
+            else
+            {
+                break;
+            }
+        }
+    }
+
+    if (IsBufferInBounds(Buffer) && PeekBuffer(Buffer) == 'e' || PeekBuffer(Buffer) == 'E')
+    {
+        ++Buffer->At;
+
+        if (IsBufferInBounds(Buffer) && PeekBuffer(Buffer) == '+')
+        {
+            ++Buffer->At;
+        }
+
+        float ExponentSign = ParseToSign(Buffer);
+        float Exponent     = ExponentSign * ParseToFloat(Buffer);
+
+        Number *= powf(10.f, Exponent);
+    }
+
+    Result = Sign * Number;
+
+    return Result;
+}
+
+
+byte_string
+ParseToIdentifier(buffer *Buffer)
+{
+    assert(IsBufferValid(Buffer));
+
+    byte_string Result = ByteString(Buffer->Data + Buffer->At, 0);
+
+    while (IsBufferInBounds(Buffer) && !IsNewLine(PeekBuffer(Buffer)) && !IsWhiteSpace(PeekBuffer(Buffer)))
+    {
+        Result.Size += 1;
+        Buffer->At  += 1;
+    }
+
+    return Result;
+}
+
+
+bool
+BufferStartsWith(byte_string String, buffer *Buffer)
+{
+    bool Result = true;
+
+    if (IsValidByteString(String) && IsBufferValid(Buffer) && Buffer->At + String.Size < Buffer->Size)
+    {
+        for (uint64_t Idx = 0; Idx < String.Size; ++Idx)
+        {
+            if (Buffer->Data[Buffer->At + Idx] != (uint8_t)String.Data[Idx])
+            {
+                Result = false;
+                break;
+            }
+        }
+    }
+
+    if (Result)
+    {
+        Buffer->At += String.Size;
+    }
+
+    return Result;
+}
