@@ -1,45 +1,49 @@
-// [Inputs/Outputs]
 
-cbuffer Constants : register(b0)
+struct VS_INPUT
 {
-    float3x3 Transform;
+    float3 Position : POSITION;
+    float2 TexCoord : TEXCOORD0;
+    float3 Normal   : NORMAL;
 };
 
-cbuffer Material : register(b1)
-{
-    float4 Color;
-    float  Opacity;
-};
-
-struct CPUToVertex
-{
-    float3 Position : POS;
-    float2 Texture  : TEX;
-    float3 Normal   : NORM;
-};
-
-struct VertexToPixel
+struct PS_INPUT
 {
     float4 Position : SV_POSITION;
-    float4 Color    : TINT;
+    float2 TexCoord : TEXCOORD0;
+    float3 Normal   : TEXCOORD1;
+    float3 WorldPos : TEXCOORD2;
 };
 
-
-// [Vertex Shader]
-
-VertexToPixel VertexMain(CPUToVertex Input)
+cbuffer TransformBuffer : register(b0)
 {
-    VertexToPixel Output;
-    Output.Position = float4(0.f, 0.f, 0.f, 0.f);
-    Output.Color    = Color;
+    float4x4 World;
+    float4x4 View;
+    float4x4 Projection;
+};
+
+Texture2D    ColorTexture   : register(t0);
+SamplerState TextureSampler : register(s0);
+
+
+PS_INPUT VS(VS_INPUT Input)
+{
+    PS_INPUT Output;
+    
+    float4 WorldPos = mul(World, float4(Input.Position, 1.0));
+    float4 ViewPos  = mul(View, WorldPos);
+    Output.Position = mul(Projection, ViewPos);
+    
+    Output.WorldPos = WorldPos.xyz;
+    Output.TexCoord = Input.TexCoord;
+    Output.Normal   = mul(Input.Normal, (float3x3) World);
+    
     return Output;
 }
 
-// [Pixel Shader]
 
-
-float4 PixelMain(VertexToPixel Input) : SV_TARGET
+float4 PS(PS_INPUT Input) : SV_TARGET
 {
-    float4 Color = Input.Color;
-    return Color;
+    float3 Albedo = ColorTexture.Sample(TextureSampler, Input.TexCoord).rgb;
+    
+    return float4(Albedo, 1.f);
 }

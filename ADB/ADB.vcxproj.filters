@@ -42,6 +42,9 @@
     <ClInclude Include="engine\math\vector.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="engine\math\matrix.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="engine\rendering\renderer.c">
@@ -66,6 +69,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="engine\math\vector.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="engine\math\matrix.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

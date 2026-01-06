@@ -1,5 +1,7 @@
 #pragma once
 
+#include "assets.h"
+
 
 typedef enum
 {
@@ -146,4 +148,13 @@ typedef struct
 
 
 void RendererStartFrame  (clear_color Color, renderer *Renderer);
+void RendererDrawFrame   (int Width, int Height, renderer *Renderer);
 void RendererFlushFrame  (renderer *Renderer);
+
+
+// ==============================================
+// <Temporary>
+// ==============================================
+
+typedef struct engine_memory engine_memory;
+void D3D11UploadStaticMesh  (asset_file_data AssetFile, engine_memory *EngineMemory, renderer *Renderer);

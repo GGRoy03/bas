@@ -29,7 +29,10 @@ typedef struct
 typedef struct platform_work_queue platform_work_queue;
 void LoadTextureFromDisk(platform_work_queue *Queue, texture_to_load *ToLoad);
 
-// Most of this should directly relate to some sort of assert_file_content
+// ==============================================
+// <Data>
+// ==============================================
+
 
 typedef struct
 {
@@ -38,16 +41,26 @@ typedef struct
 	vec3 Normal;
 } mesh_vertex_data;
 
+
+typedef enum
+{
+	MaterialMap_Color     = 0,
+	MaterialMap_Normal    = 1,
+	MaterialMap_Roughness = 2,
+
+	MaterialMap_Count     = 3,
+} MaterialMap_Type;
+
+
 typedef struct
 {
-	float       Shininess;
-	float       Opacity;
+	float          Shininess;
+	float          Opacity;
 
 	byte_string    Name;
-	loaded_texture ColorTexture;
-	loaded_texture NormalTexture;
-	loaded_texture RoughnessTexture;
+	loaded_texture Textures[MaterialMap_Count];
 } material_data;
+
 
 typedef struct
 {
@@ -56,6 +69,7 @@ typedef struct
 	uint32_t    VertexCount;
 	uint32_t    VertexOffset;
 } submesh_data;
+
 
 typedef struct
 {

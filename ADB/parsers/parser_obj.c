@@ -672,7 +672,8 @@ ParseObjFromFile(byte_string Path, engine_memory *EngineMemory)
 
             case '\0':
             {
-                // Wait on all the threaded work we enqueued.
+                // Wait on all the threaded work we enqueued. This might be too early. Perhaps we want to be lazier.
+                // Issue is we can't since we copy into the materials array. It's looks easily fixable, unsure yet.
                 EngineMemory->CompleteWork(EngineMemory->WorkQueue);
 
                 uint64_t VertexDataSize   = VertexCount         * sizeof(mesh_vertex_data);
@@ -728,11 +729,11 @@ ParseObjFromFile(byte_string Path, engine_memory *EngineMemory)
                     for (obj_material_node *MaterialNode = MaterialList->First; MaterialNode != 0; MaterialNode = MaterialNode->Next)
                     {
                         material_data *MaterialData = MeshData.Materials + MeshData.MaterialCount++;
-                        MaterialData->ColorTexture     = MaterialNode->Value.ColorTexture;
-                        MaterialData->NormalTexture    = MaterialNode->Value.NormalTexture;
-                        MaterialData->RoughnessTexture = MaterialNode->Value.RoughnessTexture;
-                        MaterialData->Opacity          = MaterialNode->Value.Opacity;
-                        MaterialData->Shininess        = MaterialNode->Value.Shininess;
+                        MaterialData->Textures[MaterialMap_Color]     = MaterialNode->Value.ColorTexture;
+                        MaterialData->Textures[MaterialMap_Normal]    = MaterialNode->Value.NormalTexture;
+                        MaterialData->Textures[MaterialMap_Roughness] = MaterialNode->Value.RoughnessTexture;
+                        MaterialData->Opacity                         = MaterialNode->Value.Opacity;
+                        MaterialData->Shininess                       = MaterialNode->Value.Shininess;
                     }
                 }
             } break;
