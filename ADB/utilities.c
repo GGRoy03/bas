@@ -2,6 +2,8 @@
 #include <stdbool.h>
 #include <assert.h>
 #include <string.h>
+#include <stdio.h>
+#include <math.h>
 
 #include "utilities.h"         // Implementation Header
 
@@ -266,6 +268,19 @@ ReplaceFileName(byte_string Path, byte_string Name, memory_arena *Arena)
     return Result;
 }
 
+
+uint64_t
+HashByteString(byte_string String)
+{
+    uint64_t Hash = 14695981039346656037ULL;
+    for (uint64_t Char = 0; Char < String.Size; ++Char)
+    {
+        Hash ^= (uint8_t)String.Data[Char];
+        Hash *= 1099511628211ULL;
+    }
+
+    return Hash;
+}
 
 // ==============================================
 // <Buffer>

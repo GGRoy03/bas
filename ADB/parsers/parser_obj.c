@@ -38,7 +38,9 @@ typedef struct
 
 typedef struct
 {
+    byte_string    Path;
     byte_string    Name;
+
     obj_color      Diffuse;
     obj_color      Ambient;
     obj_color      Specular;
@@ -68,10 +70,10 @@ typedef struct
 } obj_material_list;
 
 
-static obj_material
-FindMaterial(byte_string Name, obj_material_list *List)
+static byte_string
+FindMaterialPath(byte_string Name, obj_material_list *List)
 {
-    obj_material Result = {0};
+    byte_string Result = ByteString(0, 0);
 
     if (List)
     {
@@ -79,7 +81,7 @@ FindMaterial(byte_string Name, obj_material_list *List)
         {
             if (ByteStringCompare(Name, Node->Value.Name))
             {
-                Result = Node->Value;
+                Result = Node->Value.Path;
                 break;
             }
         }
@@ -90,7 +92,7 @@ FindMaterial(byte_string Name, obj_material_list *List)
 
 
 static obj_material_node *
-ParseMTLFromFile(byte_string Path, uint32_t *StringFootprint, engine_memory *EngineMemory)
+ParseMTLFromFile(byte_string Path, engine_memory *EngineMemory)
 {
     obj_material_node *First = 0;
     obj_material_node *Last  = 0;
@@ -118,15 +120,16 @@ ParseMTLFromFile(byte_string Path, uint32_t *StringFootprint, engine_memory *Eng
                 {
                     SkipWhitespaces(&FileBuffer);
 
-                    byte_string MtlName = ParseToIdentifier(&FileBuffer);
-                    if (IsValidByteString(MtlName))
+                    byte_string MaterialName = ParseToIdentifier(&FileBuffer);
+                    byte_string MaterialPath = ReplaceFileName(Path, MaterialName, EngineMemory->FrameMemory);
+                    if (IsValidByteString(MaterialPath))
                     {
-                        // Shouldn't we push into the output arena?
                         obj_material_node *Node = PushStruct(EngineMemory->FrameMemory, obj_material_node);
                         if (Node)
                         {
                             Node->Next = 0;
-                            Node->Value.Name = ByteStringCopy(MtlName, EngineMemory->FrameMemory);
+                            Node->Value.Name = MaterialName;
+                            Node->Value.Path = MaterialPath;
                             // Node->Value.Ambient   = {0, 0, 0};
                             // Node->Value.Diffuse   = {0, 0, 0};
                             // Node->Value.Specular  = {0};
@@ -262,8 +265,14 @@ ParseMTLFromFile(byte_string Path, uint32_t *StringFootprint, engine_memory *Eng
             {
                 SkipWhitespaces(&FileBuffer);
 
-                assert(Last);
-                Last->Value.Opacity = ParseToFloat(&FileBuffer);
+                if (Last)
+                {
+                    Last->Value.Opacity = ParseToFloat(&FileBuffer);
+                }
+                else
+                {
+                    assert(!"Malformed/Bug");
+                }
             } break;
 
             // Ignore those lines.
@@ -308,9 +317,9 @@ typedef struct
 
 typedef struct
 {
-    uint32_t     VertexStart;
-    uint32_t     VertexCount;
-    obj_material Material;
+    uint32_t    VertexStart;
+    uint32_t    VertexCount;
+    byte_string MaterialPath;
 } obj_submesh;
 
 
@@ -374,8 +383,6 @@ ParseObjFromFile(byte_string Path, engine_memory *EngineMemory)
     obj_vertex        *VertexBuffer      = PushArray(EngineMemory->FrameMemory, obj_vertex, MAX_ATTRIBUTE_PER_FILE);
     uint32_t           VertexCount       = 0;
     uint32_t           TotalSubmeshCount = 0;
-    uint64_t           StringFootprint   = 0;
-
 
     if (IsBufferValid(&FileBuffer) && PositionBuffer && NormalBuffer && TextureBuffer && VertexBuffer && MeshList && MaterialList && EngineMemory->FrameMemory)
     {
@@ -576,16 +583,16 @@ ParseObjFromFile(byte_string Path, engine_memory *EngineMemory)
                 {
                     SkipWhitespaces(&FileBuffer);
 
-                    byte_string       MtlName     = ParseToIdentifier(&FileBuffer);
-                    obj_submesh_node *SubmeshNode = PushStruct(EngineMemory->FrameMemory, obj_submesh_node);
-                    if (IsValidByteString(MtlName) && SubmeshNode && MeshList->Last)
+                    byte_string       MaterialName = ParseToIdentifier(&FileBuffer);
+                    obj_submesh_node *SubmeshNode  = PushStruct(EngineMemory->FrameMemory, obj_submesh_node);
+                    if (IsValidByteString(MaterialName) && SubmeshNode && MeshList->Last)
                     {
                         ++TotalSubmeshCount;
 
                         SubmeshNode->Next = 0;
-                        SubmeshNode->Value.Material    = FindMaterial(MtlName, MaterialList);
-                        SubmeshNode->Value.VertexCount = 0;
-                        SubmeshNode->Value.VertexStart = VertexCount;
+                        SubmeshNode->Value.MaterialPath = FindMaterialPath(MaterialName, MaterialList);
+                        SubmeshNode->Value.VertexCount  = 0;
+                        SubmeshNode->Value.VertexStart  = VertexCount;
 
                         obj_submesh_list *List = &MeshList->Last->Value.Submeshes;
                         if (!List->First)
@@ -622,7 +629,7 @@ ParseObjFromFile(byte_string Path, engine_memory *EngineMemory)
                     byte_string LibName = ParseToIdentifier(&FileBuffer);
                     byte_string Lib     = ReplaceFileName(Path, LibName, EngineMemory->FrameMemory);
 
-                    for (obj_material_node *Node = ParseMTLFromFile(Lib, &StringFootprint, EngineMemory); Node != 0; Node = Node->Next)
+                    for (obj_material_node *Node = ParseMTLFromFile(Lib, EngineMemory); Node != 0; Node = Node->Next)
                     {
                         if (MaterialList)
                         {
@@ -681,7 +688,7 @@ ParseObjFromFile(byte_string Path, engine_memory *EngineMemory)
                 uint64_t MaterialDataSize = MaterialList->Count * sizeof(material_data);
 
                 // TODO: Should allocate from a backing buffer.
-                uint64_t            Footprint = VertexDataSize + SubmeshDataSize + MaterialDataSize + StringFootprint;
+                uint64_t            Footprint = VertexDataSize + SubmeshDataSize + MaterialDataSize;
                 memory_arena_params Params =
                 {
                     .AllocatedFromFile = __FILE__,
@@ -719,10 +726,10 @@ ParseObjFromFile(byte_string Path, engine_memory *EngineMemory)
                             }
 
                             submesh_data *SubmeshData = MeshData.Submeshes + MeshData.SubmeshCount++;
-                            SubmeshData->MaterialId = 0;                     // What is this?
-                            SubmeshData->Name         = ByteString(0, 0);    // Issue with footprint? Has to be string CPY. Does this even matter?
-                            SubmeshData->VertexCount  = Submesh.VertexCount; // How many vertices for this mesh.
-                            SubmeshData->VertexOffset = Submesh.VertexStart; // Index into MeshData.Vertices (is this correct? Don't even have to track it)
+                            SubmeshData->MaterialPath = Submesh.MaterialPath;
+                            SubmeshData->Name         = ByteString(0, 0);
+                            SubmeshData->VertexCount  = Submesh.VertexCount;
+                            SubmeshData->VertexOffset = Submesh.VertexStart;
                         }
                     }
 
@@ -734,6 +741,7 @@ ParseObjFromFile(byte_string Path, engine_memory *EngineMemory)
                         MaterialData->Textures[MaterialMap_Roughness] = MaterialNode->Value.RoughnessTexture;
                         MaterialData->Opacity                         = MaterialNode->Value.Opacity;
                         MaterialData->Shininess                       = MaterialNode->Value.Shininess;
+                        MaterialData->Path                            = MaterialNode->Value.Path;
                     }
                 }
             } break;

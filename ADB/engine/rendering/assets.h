@@ -57,7 +57,7 @@ typedef struct
 	float          Shininess;
 	float          Opacity;
 
-	byte_string    Name;
+	byte_string    Path;
 	loaded_texture Textures[MaterialMap_Count];
 } material_data;
 
@@ -65,7 +65,7 @@ typedef struct
 typedef struct
 {
 	byte_string Name;
-	uint32_t    MaterialId;
+	byte_string MaterialPath;
 	uint32_t    VertexCount;
 	uint32_t    VertexOffset;
 } submesh_data;

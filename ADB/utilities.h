@@ -2,7 +2,6 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include <stdio.h>
 
 // ==============================================
 // <Utility Macros>
@@ -88,6 +87,8 @@ bool        ByteStringCompare  (byte_string A, byte_string B);
 byte_string ByteStringCopy     (byte_string Input, memory_arena *Arena);
 
 byte_string ReplaceFileName    (byte_string Path, byte_string Name, memory_arena *Arena);
+
+uint64_t    HashByteString     (byte_string String);
 
 
 // ==============================================
