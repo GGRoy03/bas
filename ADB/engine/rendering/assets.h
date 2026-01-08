@@ -12,10 +12,11 @@
 
 typedef struct
 {
-	uint32_t Width;
-	uint32_t Height;
-	uint32_t BytesPerPixel;
-	uint8_t *Data;
+	uint32_t    Width;
+	uint32_t    Height;
+	uint32_t    BytesPerPixel;
+	uint8_t    *Data;
+	byte_string Path;
 } loaded_texture;
 
 

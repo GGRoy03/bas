@@ -30,10 +30,14 @@ PushDataInBatchList(memory_arena *Arena, render_batch_list *BatchList)
                 BatchList->First = Node;
                 BatchList->Last  = Node;
             }
-            else
+            else if (BatchList->Last)
             {
                 BatchList->Last->Next = Node; // Warning but the logic should be sound?
-                BatchList->Last = Node;
+                BatchList->Last       = Node;
+            }
+            else
+            {
+                assert(!"INVALID ENGINE STATE");
             }
         }
     }
@@ -91,6 +95,9 @@ GetRenderPass(memory_arena *Arena, RenderPassType Type, render_pass_list *PassLi
 // ==============================================
 
 
+#define MAX_RENDERER_RESOURCE 128
+
+
 #define INVALID_LINK_SENTINEL   0xFFFFFFFF
 #define INVALID_RESOURCE_ENTRY  0xFFFFFFFF
 #define INVALID_RESOURCE_HANDLE 0xFFFFFFFF
@@ -107,26 +114,56 @@ typedef struct
     resource_uuid   UUID;
     resource_handle Handle;
     uint32_t        NextSameHash;
-} renderer_resource_entry;
+} resource_reference_entry;
 
 
-typedef struct
+typedef struct resource_reference_table
 {
     uint32_t                 HashMask;
     uint32_t                 HashCount;
     uint32_t                 EntryCount;
 
-    uint32_t                *HashTable;
-    renderer_resource_entry *Entries;
+    uint32_t                 HashTable[32];
+    resource_reference_entry Entries[MAX_RENDERER_RESOURCE];
     uint32_t                 FirstFreeEntry;
-} renderer_resource_table;
+} resource_reference_table;
 
 
 typedef struct
 {
     uint32_t        Id;
     resource_handle Handle;
-} renderer_resource_state;
+} resource_reference_state;
+
+
+
+typedef struct renderer_resource
+{
+    RendererResource_Type Type;
+    uint32_t              RefCount;
+    uint32_t              NextFree;
+    uint32_t              NextSameType;
+    resource_uuid         UUID;
+
+    union
+    {
+        renderer_backend_resource Backend;
+        renderer_material         Material;
+        renderer_static_mesh      StaticMesh;
+    };
+} renderer_resource;
+
+
+typedef struct renderer_resource_manager
+{
+    // Resources
+
+    renderer_resource        Resources[MAX_RENDERER_RESOURCE];
+    uint32_t                 FirstFree;
+    uint32_t                 FirstByType[RendererResource_Count];
+    uint32_t                 CountByType[RendererResource_Count];
+} renderer_resource_manager;
+
 
 
 static resource_uuid
@@ -137,18 +174,18 @@ MakeResourceUUID(byte_string PathToResource)
 }
 
 
-static renderer_resource_entry *
-GetEntry(uint32_t Index, renderer_resource_table *Table)
+static resource_reference_entry *
+GetEntry(uint32_t Index, resource_reference_table *Table)
 {
     assert(Index < Table->EntryCount);
 
-    renderer_resource_entry *Result = Table->Entries + Index;
+    resource_reference_entry *Result = Table->Entries + Index;
     return Result;
 }
 
 
 static uint32_t *
-GetSlotPointer(resource_uuid UUID, renderer_resource_table *Table)
+GetSlotPointer(resource_uuid UUID, resource_reference_table *Table)
 {
     uint64_t HashIndex = UUID.Value;
     uint32_t HashSlot  = (HashIndex & Table->HashMask);
@@ -169,13 +206,13 @@ ResourceUUIDAreEqual(resource_uuid A, resource_uuid B)
 
 
 static uint32_t
-PopFreeEntry(renderer_resource_table *Table)
+PopFreeEntry(resource_reference_table *Table)
 {
     uint32_t Result = Table->FirstFreeEntry;
 
     if (Result != INVALID_RESOURCE_ENTRY)
     {
-        renderer_resource_entry *Entry = GetEntry(Result, Table);
+        resource_reference_entry *Entry = GetEntry(Result, Table);
         assert(Entry);
 
         Table->FirstFreeEntry = Entry->NextSameHash;
@@ -187,16 +224,16 @@ PopFreeEntry(renderer_resource_table *Table)
 }
 
 
-static renderer_resource_state
-FindResourceByUUID(resource_uuid UUID, renderer_resource_table *Table)
+static resource_reference_state
+FindResourceByUUID(resource_uuid UUID, resource_reference_table *Table)
 {
-    renderer_resource_entry *Result = 0;
+    resource_reference_entry *Result = 0;
 
     uint32_t *Slot       = GetSlotPointer(UUID, Table);
     uint32_t  EntryIndex = *Slot;
     while (EntryIndex != INVALID_RESOURCE_ENTRY)
     {
-        renderer_resource_entry *Entry = GetEntry(EntryIndex, Table);
+        resource_reference_entry *Entry = GetEntry(EntryIndex, Table);
         if (ResourceUUIDAreEqual(Entry->UUID, UUID))
         {
             Result = Entry;
@@ -211,7 +248,7 @@ FindResourceByUUID(resource_uuid UUID, renderer_resource_table *Table)
         uint32_t Free = PopFreeEntry(Table);
         if (Free != INVALID_RESOURCE_ENTRY)
         {
-            renderer_resource_entry *Entry = GetEntry(Free, Table);
+            resource_reference_entry *Entry = GetEntry(Free, Table);
             Entry->UUID         = UUID;
             Entry->NextSameHash = *Slot;
 
@@ -222,7 +259,7 @@ FindResourceByUUID(resource_uuid UUID, renderer_resource_table *Table)
         }
     }
 
-    renderer_resource_state State =
+    resource_reference_state State =
     {
         .Id     = EntryIndex,
         .Handle = Result ? Result->Handle : (resource_handle){.Value = INVALID_RESOURCE_HANDLE, .Type = RendererResource_None}, 
@@ -231,11 +268,41 @@ FindResourceByUUID(resource_uuid UUID, renderer_resource_table *Table)
     return State;
 }
 
+// Maybe expose this with params?? Same params as the resource_manager basically.
+
+resource_reference_table *
+CreateResourceReferenceTable(memory_arena *Arena)
+{
+    resource_reference_table *Table = PushStruct(Arena, resource_reference_table);
+
+    if (Table)
+    {
+        Table->HashCount      = 32;
+        Table->HashMask       = 32 - 1;
+        Table->EntryCount     = MAX_RENDERER_RESOURCE;
+        Table->FirstFreeEntry = 0;
+
+        for (uint32_t HashSlot = 0; HashSlot < Table->HashCount; ++HashSlot)
+        {
+            Table->HashTable[HashSlot] = INVALID_RESOURCE_ENTRY;
+        }
+
+        for (uint32_t EntryIdx = 0; EntryIdx < Table->EntryCount; ++EntryIdx)
+        {
+            Table->Entries[EntryIdx].Handle       = (resource_handle){.Type = RendererResource_None, .Value = INVALID_RESOURCE_HANDLE};
+            Table->Entries[EntryIdx].NextSameHash = EntryIdx < Table->EntryCount - 1 ? EntryIdx + 1: INVALID_RESOURCE_ENTRY;
+            Table->Entries[EntryIdx].UUID         = (resource_uuid){.Value = 0};
+        }
+    }
+
+    return Table;
+}
+
 
 static void
-UpdateResourceReferenceTable(uint32_t Id, resource_handle Handle, renderer_resource_table *Table)
+UpdateResourceReferenceTable(uint32_t Id, resource_handle Handle, resource_reference_table *Table)
 {
-    renderer_resource_entry *Entry = GetEntry(Id, Table);
+    resource_reference_entry *Entry = GetEntry(Id, Table);
     assert(Entry);
 
     Entry->Handle = Handle;
@@ -262,7 +329,7 @@ CreateResourceHandle(resource_uuid UUID, RendererResource_Type Type, renderer_re
     if (Type != RendererResource_None && ResourceManager)
     {
         renderer_resource *Resource = ResourceManager->Resources + ResourceManager->FirstFree;
-        Resource->_RefCount    = 1;
+        Resource->RefCount     = 0;
         Resource->Type         = Type;
         Resource->UUID         = UUID;
         Resource->NextSameType = ResourceManager->FirstByType[Type];
@@ -288,7 +355,49 @@ IsValidResourceHandle(resource_handle Handle)
 }
 
 
-static void *
+static resource_handle
+BindResourceHandle(resource_handle Handle, renderer_resource_manager *ResourceManager)
+{
+    if (IsValidResourceHandle(Handle))
+    {
+        renderer_resource *Resource = GetRendererResource(Handle.Value, ResourceManager);
+        assert(Resource);
+
+        ++Resource->RefCount;
+    }
+
+    return Handle;
+}
+
+
+static resource_handle
+UnbindResourceHandle(resource_handle Handle, renderer_resource_manager *ResourceManager)
+{
+    if (IsValidResourceHandle(Handle))
+    {
+        renderer_resource *Resource = GetRendererResource(Handle.Value, ResourceManager);
+        assert(Resource);
+        assert(Resource->RefCount > 0);
+
+        --Resource->RefCount;
+
+        if (Resource->RefCount == 0)
+        {
+            // TODO: Free the resource...
+        }
+    }
+
+    resource_handle InvalidHandle =
+    {
+        .Type  = RendererResource_None,
+        .Value = INVALID_RESOURCE_HANDLE,
+    };
+
+    return InvalidHandle;
+}
+
+
+void *
 AccessUnderlyingResource(resource_handle Handle, renderer_resource_manager *ResourceManager)
 {
     void *Result = 0;
@@ -330,37 +439,40 @@ AccessUnderlyingResource(resource_handle Handle, renderer_resource_manager *Reso
 }
 
 
-renderer_resource_manager
-CreateResourceHandleManager(void)
+renderer_resource_manager *
+CreateResourceManager(memory_arena *Arena)
 {
-    renderer_resource_manager ResourceManager = {0};
+    renderer_resource_manager *ResourceManager = PushStruct(Arena, renderer_resource_manager);
 
-    uint32_t ResourceCount = ArrayCount(ResourceManager.Resources);
-
-    for (uint32_t ResourceIdx = 0; ResourceIdx < ResourceCount; ++ResourceIdx)
+    if (ResourceManager)
     {
-        renderer_resource *Resource = ResourceManager.Resources + ResourceIdx;
+        uint32_t ResourceCount = ArrayCount(ResourceManager->Resources);
 
-        Resource->Type      = RendererResource_None;
-        Resource->_RefCount = 0;
-
-        if (ResourceIdx < ResourceCount - 1)
+        for (uint32_t ResourceIdx = 0; ResourceIdx < ResourceCount; ++ResourceIdx)
         {
-            Resource->NextFree     = ResourceIdx + 1;
-            Resource->NextSameType = INVALID_LINK_SENTINEL;
+            renderer_resource *Resource = ResourceManager->Resources + ResourceIdx;
+
+            Resource->Type = RendererResource_None;
+            Resource->RefCount = 0;
+
+            if (ResourceIdx < ResourceCount - 1)
+            {
+                Resource->NextFree     = ResourceIdx + 1;
+                Resource->NextSameType = INVALID_LINK_SENTINEL;
+            }
+            else
+            {
+                Resource->NextFree     = INVALID_LINK_SENTINEL;
+                Resource->NextSameType = INVALID_LINK_SENTINEL;
+            }
         }
-        else
+
+        ResourceManager->FirstFree = 0;
+
+        for (uint32_t ResourceType = RendererResource_Texture2D; ResourceType < RendererResource_Count; ++ResourceType)
         {
-            Resource->NextFree     = INVALID_LINK_SENTINEL;
-            Resource->NextSameType = INVALID_LINK_SENTINEL;
+            ResourceManager->FirstByType[ResourceType] = INVALID_LINK_SENTINEL;
         }
-    }
-
-    ResourceManager.FirstFree = 0;
-
-    for (uint32_t ResourceType = RendererResource_Texture2D; ResourceType < RendererResource_Count; ++ResourceType)
-    {
-        ResourceManager.FirstByType[ResourceType] = INVALID_LINK_SENTINEL;
     }
     
     return ResourceManager;
@@ -370,36 +482,34 @@ CreateResourceHandleManager(void)
 void
 CreateStaticMesh(asset_file_data AssetFile, renderer *Renderer)
 {
-    // We start by processing the materials, because submeshes can reference newly created materials.
-    // This function is probably not the final version overall, but it allows us to test the resource manager which is nice.
-    // As well as getting a feeling for the API.
-
     for (uint32_t MaterialIdx = 0; MaterialIdx < AssetFile.MaterialCount; ++MaterialIdx)
     {
-        resource_uuid           MaterialUUID  = MakeResourceUUID(AssetFile.Materials[MaterialIdx].Path);
-        renderer_resource_state MaterialState = FindResourceByUUID(MaterialUUID, 0);
+        resource_uuid            MaterialUUID  = MakeResourceUUID(AssetFile.Materials[MaterialIdx].Path);
+        resource_reference_state MaterialState = FindResourceByUUID(MaterialUUID, Renderer->ReferenceTable);
 
         if (!IsValidResourceHandle(MaterialState.Handle))
         {
-            resource_handle    MaterialHandle = CreateResourceHandle(MaterialUUID, RendererResource_Material, &Renderer->Resources);
-            renderer_material *Material       = AccessUnderlyingResource(MaterialHandle, &Renderer->Resources);
+            resource_handle    MaterialHandle = CreateResourceHandle(MaterialUUID, RendererResource_Material, Renderer->Resources);
+            renderer_material *Material       = AccessUnderlyingResource(MaterialHandle, Renderer->Resources);
 
             if (Material)
             {
                 for (MaterialMap_Type MapType = MaterialMap_Color; MapType < MaterialMap_Count; ++MapType)
                 {
-                    resource_uuid           TextureUUID  = MakeResourceUUID(ByteString(0, 0));
-                    renderer_resource_state TextureState = FindResourceByUUID(TextureUUID, 0);
+                    resource_uuid            TextureUUID  = MakeResourceUUID(AssetFile.Materials[MaterialIdx].Textures[MapType].Path);
+                    resource_reference_state TextureState = FindResourceByUUID(TextureUUID, Renderer->ReferenceTable);
 
                     if (!IsValidResourceHandle(TextureState.Handle))
                     {
-                        resource_handle            TextureHandle   = CreateResourceHandle(TextureUUID, RendererResource_TextureView, &Renderer->Resources);
-                        renderer_backend_resource *BackendResource = AccessUnderlyingResource(TextureHandle, &Renderer->Resources);
+                        resource_handle            TextureHandle   = CreateResourceHandle(TextureUUID, RendererResource_TextureView, Renderer->Resources);
+                        renderer_backend_resource *BackendResource = AccessUnderlyingResource(TextureHandle, Renderer->Resources);
 
                         if (BackendResource)
                         {
                             BackendResource->Data = RendererCreateTexture(AssetFile.Materials[MaterialIdx].Textures[MapType], Renderer);
                         }
+
+                        Material->Maps[MapType] = BindResourceHandle(TextureHandle, Renderer->Resources);
                     }
                     else
                     {
@@ -414,7 +524,7 @@ CreateStaticMesh(asset_file_data AssetFile, renderer *Renderer)
                 assert(!"How do we handle such a case?");
             }
 
-            UpdateResourceReferenceTable(MaterialState.Id, MaterialHandle, 0);
+            UpdateResourceReferenceTable(MaterialState.Id, MaterialHandle, Renderer->ReferenceTable);
         }
         else
         {
@@ -422,56 +532,51 @@ CreateStaticMesh(asset_file_data AssetFile, renderer *Renderer)
         }       
     }
 
-    resource_uuid           MeshUUID  = MakeResourceUUID(ByteString(0, 0));
-    renderer_resource_state MeshState = FindResourceByUUID(MeshUUID, 0);
+    resource_uuid            MeshUUID  = MakeResourceUUID(ByteStringLiteral("This is a mesh"));
+    resource_reference_state MeshState = FindResourceByUUID(MeshUUID, Renderer->ReferenceTable);
 
     if (!IsValidResourceHandle(MeshState.Handle))
     {
-        resource_handle       MeshHandle = CreateResourceHandle(MeshUUID, RendererResource_StaticMesh, &Renderer->Resources);
-        renderer_static_mesh *StaticMesh = AccessUnderlyingResource(MeshHandle, &Renderer->Resources);
+        resource_handle       MeshHandle = CreateResourceHandle(MeshUUID, RendererResource_StaticMesh, Renderer->Resources);
+        renderer_static_mesh *StaticMesh = AccessUnderlyingResource(MeshHandle, Renderer->Resources);
 
-        // This code is somewhat confusing. Who owns what? The mesh only has an handle to the vertex
-        // buffer, but reading this code tells me intuitively that the mesh owns it? Slightly confused.
-        // It should only add a reference to it by binding to it. I don't think CreateResource should
-        // add a reference to anything.
-        
-        resource_uuid           VertexBufferUUID  = MakeResourceUUID(ByteString(0, 0));
-        renderer_resource_state VertexBufferState = FindResourceByUUID(VertexBufferUUID, 0);
+        resource_uuid            VertexBufferUUID  = MakeResourceUUID(ByteStringLiteral("This is a buffer"));
+        resource_reference_state VertexBufferState = FindResourceByUUID(VertexBufferUUID, Renderer->ReferenceTable);
 
         if (!IsValidResourceHandle(VertexBufferState.Handle))
         {
-            StaticMesh->VertexBuffer     = CreateResourceHandle(VertexBufferUUID, RendererResource_VertexBuffer, &Renderer->Resources);
-            StaticMesh->VertexBufferSize = AssetFile.VertexCount * sizeof(mesh_vertex_data);
+            resource_handle            VertexBufferHandle = CreateResourceHandle(VertexBufferUUID, RendererResource_VertexBuffer, Renderer->Resources);
+            renderer_backend_resource *VertexBuffer       = AccessUnderlyingResource(VertexBufferHandle, Renderer->Resources);
+            uint64_t                   VertexBufferSize   = AssetFile.VertexCount * sizeof(mesh_vertex_data);
 
-            renderer_backend_resource *VertexBuffer = AccessUnderlyingResource(StaticMesh->VertexBuffer, &Renderer->Resources);
             if (VertexBuffer)
             {
-                VertexBuffer = RendererCreateVertexBuffer(AssetFile.Vertices, StaticMesh->VertexBufferSize, Renderer);
+                VertexBuffer->Data = RendererCreateVertexBuffer(AssetFile.Vertices, VertexBufferSize, Renderer);
             }
 
-            UpdateResourceReferenceTable(VertexBufferState.Id, StaticMesh->VertexBuffer, 0);
+            StaticMesh->VertexBuffer     = BindResourceHandle(VertexBufferHandle, Renderer->Resources);
+            StaticMesh->VertexBufferSize = VertexBufferSize;
+
+            UpdateResourceReferenceTable(VertexBufferState.Id, VertexBufferHandle, Renderer->ReferenceTable);
         }
 
         assert(AssetFile.SubmeshCount < MAX_SUBMESH_COUNT);
+
+        StaticMesh->SubmeshCount = AssetFile.SubmeshCount;
 
         for (uint32_t SubmeshIdx = 0; SubmeshIdx < AssetFile.SubmeshCount; ++SubmeshIdx)
         {
             submesh_data *SubmeshData = &AssetFile.Submeshes[SubmeshIdx];
 
-            resource_uuid           MaterialUUID  = MakeResourceUUID(SubmeshData->MaterialPath);
-            renderer_resource_state MaterialState = FindResourceByUUID(MaterialUUID, 0);
+            resource_uuid            MaterialUUID  = MakeResourceUUID(SubmeshData->MaterialPath);
+            resource_reference_state MaterialState = FindResourceByUUID(MaterialUUID, Renderer->ReferenceTable);
 
-            StaticMesh->Submeshes[SubmeshIdx].Material    = MaterialState.Handle;
+            StaticMesh->Submeshes[SubmeshIdx].Material    = BindResourceHandle(MaterialState.Handle, Renderer->Resources);
             StaticMesh->Submeshes[SubmeshIdx].VertexCount = SubmeshData->VertexCount;
             StaticMesh->Submeshes[SubmeshIdx].VertexStart = SubmeshData->VertexOffset;
-
-            // TODO: Then we probably have to add some kind of reference to the material?
-            // When we create the material, there should be 0 references to it no?
-            // I think this is the part that I am missing, the reference thing.
-            // It would also fix the weird issue I have with the vertex buffer code.
         }
 
-        UpdateResourceReferenceTable(MeshState.Id, MeshHandle, 0);
+        UpdateResourceReferenceTable(MeshState.Id, MeshHandle, Renderer->ReferenceTable);
     }
     else
     {
@@ -489,7 +594,7 @@ RendererGetAllStaticMeshes(engine_memory *EngineMemory, renderer *Renderer)
 
     if (EngineMemory && Renderer)
     {
-        renderer_resource_manager *ResourceManager = &Renderer->Resources;
+        renderer_resource_manager *ResourceManager = Renderer->Resources;
 
         uint32_t Count = ResourceManager->CountByType[RendererResource_StaticMesh];
         uint32_t First = ResourceManager->FirstByType[RendererResource_StaticMesh];

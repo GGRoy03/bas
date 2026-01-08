@@ -284,9 +284,10 @@ WinMain(HINSTANCE HInstance, HINSTANCE PrevInstance, LPSTR CmdLine, int CmdShow)
 
 
     renderer *Renderer = PushStruct(EngineMemory.StateMemory, renderer);
-    Renderer->Backend   = D3D11Initialize(WindowHandle, EngineMemory.StateMemory);
-    Renderer->Camera    = CreateCamera(Vec3(0.f, 0.f, -20.f), 3.14159f / 4.f, 1901.f / 1041.f);
-    Renderer->Resources = CreateResourceManager();
+    Renderer->Backend        = D3D11Initialize(WindowHandle, EngineMemory.StateMemory);
+    Renderer->Camera         = CreateCamera(Vec3(0.f, 0.f, -20.f), 3.14159f / 4.f, 1901.f / 1041.f);
+    Renderer->Resources      = CreateResourceManager(EngineMemory.StateMemory);
+    Renderer->ReferenceTable = CreateResourceReferenceTable(EngineMemory.StateMemory);
 
     while (Running)
     {

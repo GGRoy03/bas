@@ -233,7 +233,8 @@ ParseMTLFromFile(byte_string Path, engine_memory *EngineMemory)
                     byte_string TextureName = ParseToIdentifier(&FileBuffer);
                     byte_string TexturePath = ReplaceFileName(Path, TextureName, EngineMemory->FrameMemory);
                     
-                    ToLoad->FileContent = ReadFileInBuffer(TexturePath, EngineMemory->FrameMemory);
+                    ToLoad->FileContent  = ReadFileInBuffer(TexturePath, EngineMemory->FrameMemory);
+                    ToLoad->Output->Path = TexturePath;
                     
                     EngineMemory->AddEntry(EngineMemory->WorkQueue, LoadTextureFromDisk, ToLoad);
                 }

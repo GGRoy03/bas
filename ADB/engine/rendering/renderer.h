@@ -104,13 +104,12 @@ void *        PushDataInBatchList  (memory_arena *Arena, render_batch_list *Batc
 // <Resources> 
 // ==============================================
 
-// TODO: Hide most of this code and cleanup the public API.
 
-typedef struct renderer_resource renderer_resource;
+typedef struct renderer_resource_manager renderer_resource_manager;
+typedef struct resource_reference_table  resource_reference_table;
 
 
-#define MAX_RENDERER_RESOURCE 128
-#define MAX_SUBMESH_COUNT     8
+#define MAX_SUBMESH_COUNT 8
 
 
 typedef enum
@@ -119,14 +118,14 @@ typedef enum
 
     // Base
 
-    RendererResource_Texture2D    = 1,
-    RendererResource_TextureView  = 2,
+    RendererResource_Texture2D = 1,
+    RendererResource_TextureView = 2,
     RendererResource_VertexBuffer = 3,
 
     // Composite
 
-    RendererResource_Material     = 4,
-    RendererResource_StaticMesh   = 5,
+    RendererResource_Material = 4,
+    RendererResource_StaticMesh = 5,
 
     RendererResource_Count = 6,
 } RendererResource_Type;
@@ -168,36 +167,6 @@ typedef struct
 } renderer_static_mesh;
 
 
-typedef struct renderer_resource
-{
-    RendererResource_Type Type;
-    uint32_t             _RefCount;
-    uint32_t              NextFree;
-    uint32_t              NextSameType;
-    uint64_t              UUID;
-
-    // This is such a waste of space... Umph.. It is simpler.
-
-    union
-    {
-        renderer_backend_resource Backend;
-        renderer_material         Material;
-        renderer_static_mesh      StaticMesh;
-    };
-} renderer_resource;
-
-
-typedef struct
-{
-    // Resources
-
-    renderer_resource Resources[MAX_RENDERER_RESOURCE];
-    uint32_t          FirstFree;
-    uint32_t          FirstByType[RendererResource_Count];
-    uint32_t          CountByType[RendererResource_Count];
-} renderer_resource_manager;
-
-
 typedef struct
 {
     mat4x4 World;
@@ -213,11 +182,15 @@ typedef struct
 } static_mesh_list;
 
 
-renderer_resource_manager CreateResourceManager  (void);
-
-
 void             CreateStaticMesh            (asset_file_data AssetFile, renderer *Renderer);
 static_mesh_list RendererGetAllStaticMeshes  (engine_memory *EngineMemory, renderer *Renderer);
+
+// New API
+
+renderer_resource_manager * CreateResourceManager         (memory_arena *Arena);
+resource_reference_table  * CreateResourceReferenceTable  (memory_arena *Arena);
+
+void * AccessUnderlyingResource  (resource_handle Handle, renderer_resource_manager *ResourceManager);
 
 
 // 
@@ -282,11 +255,14 @@ void RendererFlushFrame  (renderer *Renderer);
 // <...> 
 // ==============================================
 
+
+
 typedef struct renderer
 {
-    void                     *Backend;
-    render_pass_list          PassList;
-    memory_arena             *FrameArena;
-    renderer_resource_manager Resources;
-    camera                    Camera;
+    void                      *Backend;
+    render_pass_list           PassList;
+    memory_arena              *FrameArena;
+    renderer_resource_manager *Resources;
+    resource_reference_table  *ReferenceTable;
+    camera                     Camera;
 } renderer;

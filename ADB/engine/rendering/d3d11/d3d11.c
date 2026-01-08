@@ -314,7 +314,9 @@ RendererDrawFrame(int Width, int Height, engine_memory *EngineMemory, renderer *
     {
         renderer_static_mesh *StaticMesh = MeshList.Data[Idx];
 
-        ID3D11Buffer *VertexBuffer = (ID3D11Buffer *)StaticMesh->VertexBuffer->Backend;
+        renderer_backend_resource *BD = AccessUnderlyingResource(StaticMesh->VertexBuffer, Renderer->Resources);
+
+        ID3D11Buffer *VertexBuffer = (ID3D11Buffer *)BD->Data;
         UINT32        Stride       = sizeof(mesh_vertex_data);
         UINT32        Offset       = 0;
         Context->lpVtbl->IASetVertexBuffers(Context, 0, 1, &VertexBuffer, &Stride, &Offset);
@@ -325,9 +327,13 @@ RendererDrawFrame(int Width, int Height, engine_memory *EngineMemory, renderer *
 
             ID3D11ShaderResourceView *MaterialView[MaterialMap_Count] = {0};
             {
-                renderer_material *Material = Submesh->Material;
+                renderer_material *Material = AccessUnderlyingResource(Submesh->Material, Renderer->Resources);
 
-                MaterialView[MaterialMap_Color]     = Material->Maps[MaterialMap_Color]     ? Material->Maps[MaterialMap_Color]->Backend     : 0;
+                // TODO: Fix these queries
+
+                renderer_backend_resource *BD1 = AccessUnderlyingResource(Material->Maps[MaterialMap_Color], Renderer->Resources);
+
+                MaterialView[MaterialMap_Color] = BD1->Data;
                 // MaterialView[MaterialMap_Normal]    = Material->Maps[MaterialMap_Normal]    ? Material->Maps[MaterialMap_Normal]->Backend    : 0;
                 // MaterialView[MaterialMap_Roughness] = Material->Maps[MaterialMap_Roughness] ? Material->Maps[MaterialMap_Roughness]->Backend : 0;
             }
