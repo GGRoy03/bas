@@ -32,7 +32,7 @@ PushDataInBatchList(memory_arena *Arena, render_batch_list *BatchList)
             }
             else if (BatchList->Last)
             {
-                BatchList->Last->Next = Node; // Warning but the logic should be sound?
+                BatchList->Last->Next = Node;
                 BatchList->Last       = Node;
             }
             else
@@ -480,7 +480,7 @@ CreateResourceManager(memory_arena *Arena)
 
 
 void
-CreateStaticMesh(asset_file_data AssetFile, renderer *Renderer)
+LoadAssetFileData(asset_file_data AssetFile, memory_arena *Arena, renderer *Renderer)
 {
     for (uint32_t MaterialIdx = 0; MaterialIdx < AssetFile.MaterialCount; ++MaterialIdx)
     {
@@ -532,55 +532,81 @@ CreateStaticMesh(asset_file_data AssetFile, renderer *Renderer)
         }       
     }
 
-    resource_uuid            MeshUUID  = MakeResourceUUID(ByteStringLiteral("This is a mesh"));
-    resource_reference_state MeshState = FindResourceByUUID(MeshUUID, Renderer->ReferenceTable);
-
-    if (!IsValidResourceHandle(MeshState.Handle))
+    for (uint32_t MeshIdx = 0; MeshIdx < AssetFile.MeshCount; ++MeshIdx)
     {
-        resource_handle       MeshHandle = CreateResourceHandle(MeshUUID, RendererResource_StaticMesh, Renderer->Resources);
-        renderer_static_mesh *StaticMesh = AccessUnderlyingResource(MeshHandle, Renderer->Resources);
+        asset_mesh_data *MeshData = &AssetFile.Meshes[MeshIdx];
 
-        resource_uuid            VertexBufferUUID  = MakeResourceUUID(ByteStringLiteral("This is a buffer"));
-        resource_reference_state VertexBufferState = FindResourceByUUID(VertexBufferUUID, Renderer->ReferenceTable);
+        // Since multiple meshes can come from the same file we have to modify their resource names as:
+        // {Path}/{Name}
+        // For example: data/strawberry.obj and a mesh strawberry => data/strawberry:strawberry
 
-        if (!IsValidResourceHandle(VertexBufferState.Handle))
+        byte_string PathWithNoExtension  = StripExtensionName(MeshData->Path);
+        uint64_t    MeshResourceNameSize = PathWithNoExtension.Size + MeshData->Name.Size + 2;
+        byte_string MeshResourceName     = ByteString(PushArray(Arena, uint8_t, MeshResourceNameSize), 0);
+
+        for (uint32_t Idx = 0; Idx < PathWithNoExtension.Size; ++Idx)
         {
-            resource_handle            VertexBufferHandle = CreateResourceHandle(VertexBufferUUID, RendererResource_VertexBuffer, Renderer->Resources);
-            renderer_backend_resource *VertexBuffer       = AccessUnderlyingResource(VertexBufferHandle, Renderer->Resources);
-            uint64_t                   VertexBufferSize   = AssetFile.VertexCount * sizeof(mesh_vertex_data);
+            MeshResourceName.Data[MeshResourceName.Size++] = PathWithNoExtension.Data[Idx];
+        }
 
-            if (VertexBuffer)
+        MeshResourceName.Data[MeshResourceName.Size++] = ':';
+        MeshResourceName.Data[MeshResourceName.Size++] = ':';
+        
+        for (uint32_t Idx = 0; Idx < MeshData->Name.Size; ++Idx)
+        {
+            MeshResourceName.Data[MeshResourceName.Size++] = MeshData->Name.Data[Idx];
+        }
+
+        resource_uuid            MeshUUID  = MakeResourceUUID(MeshResourceName);
+        resource_reference_state MeshState = FindResourceByUUID(MeshUUID, Renderer->ReferenceTable);
+        
+        if (!IsValidResourceHandle(MeshState.Handle))
+        {
+            resource_handle       MeshHandle = CreateResourceHandle(MeshUUID, RendererResource_StaticMesh, Renderer->Resources);
+            renderer_static_mesh *StaticMesh = AccessUnderlyingResource(MeshHandle, Renderer->Resources);
+        
+            resource_uuid            VertexBufferUUID  = MakeResourceUUID(ByteStringLiteral("This is a buffer"));
+            resource_reference_state VertexBufferState = FindResourceByUUID(VertexBufferUUID, Renderer->ReferenceTable);
+        
+            if (!IsValidResourceHandle(VertexBufferState.Handle))
             {
-                VertexBuffer->Data = RendererCreateVertexBuffer(AssetFile.Vertices, VertexBufferSize, Renderer);
+                resource_handle            VertexBufferHandle = CreateResourceHandle(VertexBufferUUID, RendererResource_VertexBuffer, Renderer->Resources);
+                renderer_backend_resource *VertexBuffer       = AccessUnderlyingResource(VertexBufferHandle, Renderer->Resources);
+                uint64_t                   VertexBufferSize   = AssetFile.VertexCount * sizeof(mesh_vertex_data);
+        
+                if (VertexBuffer)
+                {
+                    VertexBuffer->Data = RendererCreateVertexBuffer(AssetFile.Vertices, VertexBufferSize, Renderer);
+                }
+        
+                StaticMesh->VertexBuffer     = BindResourceHandle(VertexBufferHandle, Renderer->Resources);
+                StaticMesh->VertexBufferSize = VertexBufferSize;
+        
+                UpdateResourceReferenceTable(VertexBufferState.Id, VertexBufferHandle, Renderer->ReferenceTable);
             }
-
-            StaticMesh->VertexBuffer     = BindResourceHandle(VertexBufferHandle, Renderer->Resources);
-            StaticMesh->VertexBufferSize = VertexBufferSize;
-
-            UpdateResourceReferenceTable(VertexBufferState.Id, VertexBufferHandle, Renderer->ReferenceTable);
+        
+            assert(MeshData->SubmeshCount < MAX_SUBMESH_COUNT);
+        
+            StaticMesh->SubmeshCount = MeshData->SubmeshCount;
+        
+            for (uint32_t SubmeshIdx = 0; SubmeshIdx < MeshData->SubmeshCount; ++SubmeshIdx)
+            {
+                asset_submesh_data *SubmeshData = &MeshData->Submeshes[SubmeshIdx];
+        
+                resource_uuid            MaterialUUID  = MakeResourceUUID(SubmeshData->MaterialPath);
+                resource_reference_state MaterialState = FindResourceByUUID(MaterialUUID, Renderer->ReferenceTable);
+        
+                StaticMesh->Submeshes[SubmeshIdx].Material    = BindResourceHandle(MaterialState.Handle, Renderer->Resources);
+                StaticMesh->Submeshes[SubmeshIdx].VertexCount = SubmeshData->VertexCount;
+                StaticMesh->Submeshes[SubmeshIdx].VertexStart = SubmeshData->VertexOffset;
+            }
+        
+            UpdateResourceReferenceTable(MeshState.Id, MeshHandle, Renderer->ReferenceTable);
         }
-
-        assert(AssetFile.SubmeshCount < MAX_SUBMESH_COUNT);
-
-        StaticMesh->SubmeshCount = AssetFile.SubmeshCount;
-
-        for (uint32_t SubmeshIdx = 0; SubmeshIdx < AssetFile.SubmeshCount; ++SubmeshIdx)
+        else
         {
-            submesh_data *SubmeshData = &AssetFile.Submeshes[SubmeshIdx];
-
-            resource_uuid            MaterialUUID  = MakeResourceUUID(SubmeshData->MaterialPath);
-            resource_reference_state MaterialState = FindResourceByUUID(MaterialUUID, Renderer->ReferenceTable);
-
-            StaticMesh->Submeshes[SubmeshIdx].Material    = BindResourceHandle(MaterialState.Handle, Renderer->Resources);
-            StaticMesh->Submeshes[SubmeshIdx].VertexCount = SubmeshData->VertexCount;
-            StaticMesh->Submeshes[SubmeshIdx].VertexStart = SubmeshData->VertexOffset;
+            assert(!"How do we handle such a case?");
         }
-
-        UpdateResourceReferenceTable(MeshState.Id, MeshHandle, Renderer->ReferenceTable);
-    }
-    else
-    {
-        assert(!"How do we handle such a case?");
     }
 }
 

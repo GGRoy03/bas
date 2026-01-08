@@ -65,20 +65,29 @@ typedef struct
 
 typedef struct
 {
-	byte_string Name;
 	byte_string MaterialPath;
 	uint32_t    VertexCount;
 	uint32_t    VertexOffset;
-} submesh_data;
+} asset_submesh_data;
 
 
+typedef struct
+{
+	asset_submesh_data *Submeshes;
+	uint32_t            SubmeshCount;
+	byte_string         Name;
+	byte_string         Path;
+} asset_mesh_data; 
+
+
+// We should have an array of meshes not submeshes.
 typedef struct
 {
 	mesh_vertex_data *Vertices;
 	uint32_t          VertexCount;
 
-	submesh_data     *Submeshes;
-	uint32_t          SubmeshCount;
+	asset_mesh_data  *Meshes;
+	uint32_t          MeshCount;
 
 	material_data    *Materials;
 	uint32_t          MaterialCount;

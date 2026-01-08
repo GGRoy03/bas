@@ -269,6 +269,23 @@ ReplaceFileName(byte_string Path, byte_string Name, memory_arena *Arena)
 }
 
 
+byte_string
+StripExtensionName(byte_string Path)
+{
+    uint64_t NewSize = Path.Size;
+    uint8_t *Data    = Path.Data + Path.Size;
+
+    while (NewSize > 0 && *Data != '.')
+    {
+        --Data;
+        --NewSize;
+    }
+
+    byte_string Result = ByteString(Path.Data, NewSize);
+    return Result;
+}
+
+
 uint64_t
 HashByteString(byte_string String)
 {

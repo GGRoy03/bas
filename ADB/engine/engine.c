@@ -24,7 +24,7 @@ UpdateEngine(int WindowWidth, int WindowHeight, renderer *Renderer, engine_memor
 	{
 		asset_file_data AssetData = ParseObjFromFile(ByteStringLiteral("data/strawberry.obj"), EngineMemory);
 
-		CreateStaticMesh(AssetData, Renderer);
+		LoadAssetFileData(AssetData, EngineMemory->FrameMemory, Renderer);
 		
 
 		// TODO: From the asset_file_data we want to initialize the rendering objects. The idea is to construct a static mesh from the mesh_data. Just do a naive implementation.

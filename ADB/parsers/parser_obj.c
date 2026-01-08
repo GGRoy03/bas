@@ -1,17 +1,13 @@
 #pragma once
 
 // TODO:
-// 0) Decouple materials from meshes
 // 1) Vertex Elimination (Agnostic)
 // 2) Index  Buffer Gen
 // 3) Error Reporting + Robustness
+// 4) Remove the output arena idea
 
 #include <stdint.h>
 #include <assert.h>
-#include <stdio.h>
-#include <stdbool.h>
-#include <math.h>
-#include <string.h>
 
 #include "../utilities.h"
 #include "parser_obj.h"
@@ -343,6 +339,8 @@ typedef struct
 typedef struct
 {
     obj_submesh_list Submeshes;
+    byte_string      Name;
+    byte_string      Path;
 } obj_mesh;
 
 typedef struct obj_mesh_node obj_mesh_node;
@@ -367,7 +365,7 @@ typedef struct
 asset_file_data
 ParseObjFromFile(byte_string Path, engine_memory *EngineMemory)
 {
-    asset_file_data MeshData = {0};
+    asset_file_data FileData = {0};
 
     // Initialize the parsing state
     // (May be abstracted to reduce memory allocs when parsing a sequence of files.)
@@ -383,7 +381,6 @@ ParseObjFromFile(byte_string Path, engine_memory *EngineMemory)
     uint32_t           TextureCount      = 0;
     obj_vertex        *VertexBuffer      = PushArray(EngineMemory->FrameMemory, obj_vertex, MAX_ATTRIBUTE_PER_FILE);
     uint32_t           VertexCount       = 0;
-    uint32_t           TotalSubmeshCount = 0;
 
     if (IsBufferValid(&FileBuffer) && PositionBuffer && NormalBuffer && TextureBuffer && VertexBuffer && MeshList && MaterialList && EngineMemory->FrameMemory)
     {
@@ -544,6 +541,8 @@ ParseObjFromFile(byte_string Path, engine_memory *EngineMemory)
                 if (MeshNode)
                 {
                     MeshNode->Next = 0;
+                    MeshNode->Value.Name            = ParseToIdentifier(&FileBuffer);
+                    MeshNode->Value.Path            = Path;
                     MeshNode->Value.Submeshes.First = 0;
                     MeshNode->Value.Submeshes.Last  = 0;
                     MeshNode->Value.Submeshes.Count = 0;
@@ -564,12 +563,6 @@ ParseObjFromFile(byte_string Path, engine_memory *EngineMemory)
                     }
 
                     ++MeshList->Count;
-                    
-                    // TODO: Do we care about the name?
-                    while (!IsNewLine(PeekBuffer(&FileBuffer)))
-                    {
-                        ++FileBuffer.At;
-                    }
                 }
                 else
                 {
@@ -588,8 +581,6 @@ ParseObjFromFile(byte_string Path, engine_memory *EngineMemory)
                     obj_submesh_node *SubmeshNode  = PushStruct(EngineMemory->FrameMemory, obj_submesh_node);
                     if (IsValidByteString(MaterialName) && SubmeshNode && MeshList->Last)
                     {
-                        ++TotalSubmeshCount;
-
                         SubmeshNode->Next = 0;
                         SubmeshNode->Value.MaterialPath = FindMaterialPath(MaterialName, MaterialList);
                         SubmeshNode->Value.VertexCount  = 0;
@@ -684,67 +675,58 @@ ParseObjFromFile(byte_string Path, engine_memory *EngineMemory)
                 // Issue is we can't since we copy into the materials array. It's looks easily fixable, unsure yet.
                 EngineMemory->CompleteWork(EngineMemory->WorkQueue);
 
-                uint64_t VertexDataSize   = VertexCount         * sizeof(mesh_vertex_data);
-                uint64_t SubmeshDataSize  = TotalSubmeshCount   * sizeof(submesh_data);
-                uint64_t MaterialDataSize = MaterialList->Count * sizeof(material_data);
+                FileData.Vertices      = PushArray(EngineMemory->FrameMemory, mesh_vertex_data, VertexCount);
+                FileData.VertexCount   = 0;
+                FileData.Meshes        = PushArray(EngineMemory->FrameMemory, asset_mesh_data, MeshList->Count);
+                FileData.MeshCount     = 0;
+                FileData.Materials     = PushArray(EngineMemory->FrameMemory, material_data, MaterialList->Count);
+                FileData.MaterialCount = 0;
 
-                // TODO: Should allocate from a backing buffer.
-                uint64_t            Footprint = VertexDataSize + SubmeshDataSize + MaterialDataSize;
-                memory_arena_params Params =
+                for (obj_mesh_node *MeshNode = MeshList->First; MeshNode != 0; MeshNode = MeshNode->Next)
                 {
-                    .AllocatedFromFile = __FILE__,
-                    .AllocatedFromLine = __LINE__,
-                    .ReserveSize       = Footprint,
-                    .CommitSize        = Footprint,
-                };
+                    obj_mesh         Mesh     = MeshNode->Value;
+                    asset_mesh_data *MeshData = FileData.Meshes + FileData.MeshCount++;
 
-                memory_arena *OutputArena = AllocateArena(Params);
-                if (OutputArena)
-                {
-                    MeshData.Vertices      = PushArray(OutputArena, mesh_vertex_data, VertexCount);
-                    MeshData.VertexCount   = 0;
-                    MeshData.Submeshes     = PushArray(OutputArena, submesh_data, TotalSubmeshCount);
-                    MeshData.SubmeshCount  = 0;
-                    MeshData.Materials     = PushArray(OutputArena, material_data, MaterialList->Count);
-                    MeshData.MaterialCount = 0;
+                    MeshData->Name         = Mesh.Name;
+                    MeshData->Path         = Mesh.Path;
+                    MeshData->SubmeshCount = 0;
+                    MeshData->Submeshes    = PushArray(EngineMemory->FrameMemory, asset_submesh_data, Mesh.Submeshes.Count);
 
-                    for (obj_mesh_node *MeshNode = MeshList->First; MeshNode != 0; MeshNode = MeshNode->Next)
+                    if (MeshData->Submeshes)
                     {
-                        obj_mesh Mesh = MeshNode->Value;
-
                         for (obj_submesh_node *SubmeshNode = Mesh.Submeshes.First; SubmeshNode != 0; SubmeshNode = SubmeshNode->Next)
                         {
                             obj_submesh Submesh  = SubmeshNode->Value;
                             obj_vertex *Vertices = VertexBuffer + Submesh.VertexStart;
-
+                        
                             for (uint32_t Idx = 0; Idx < Submesh.VertexCount; ++Idx)
                             {
                                 vec3 Position = PositionBuffer[Vertices[Idx].PositionIndex];
                                 vec2 Texture  = TextureBuffer[Vertices[Idx].TextureIndex];
                                 vec3 Normal   = NormalBuffer[Vertices[Idx].NormalIndex];
-
-                                MeshData.Vertices[MeshData.VertexCount++] = (mesh_vertex_data){.Position = Position, .Texture = Texture, .Normal = Normal};
+                        
+                                FileData.Vertices[FileData.VertexCount++] = (mesh_vertex_data){.Position = Position, .Texture = Texture, .Normal = Normal};
                             }
 
-                            submesh_data *SubmeshData = MeshData.Submeshes + MeshData.SubmeshCount++;
+                            asset_submesh_data *SubmeshData = MeshData->Submeshes + MeshData->SubmeshCount++;
                             SubmeshData->MaterialPath = Submesh.MaterialPath;
-                            SubmeshData->Name         = ByteString(0, 0);
                             SubmeshData->VertexCount  = Submesh.VertexCount;
                             SubmeshData->VertexOffset = Submesh.VertexStart;
                         }
                     }
-
-                    for (obj_material_node *MaterialNode = MaterialList->First; MaterialNode != 0; MaterialNode = MaterialNode->Next)
-                    {
-                        material_data *MaterialData = MeshData.Materials + MeshData.MaterialCount++;
-                        MaterialData->Textures[MaterialMap_Color]     = MaterialNode->Value.ColorTexture;
-                        MaterialData->Textures[MaterialMap_Normal]    = MaterialNode->Value.NormalTexture;
-                        MaterialData->Textures[MaterialMap_Roughness] = MaterialNode->Value.RoughnessTexture;
-                        MaterialData->Opacity                         = MaterialNode->Value.Opacity;
-                        MaterialData->Shininess                       = MaterialNode->Value.Shininess;
-                        MaterialData->Path                            = MaterialNode->Value.Path;
-                    }
                 }
+
+                for (obj_material_node *MaterialNode = MaterialList->First; MaterialNode != 0; MaterialNode = MaterialNode->Next)
+                {
+                    material_data *MaterialData = FileData.Materials + FileData.MaterialCount++;
+                    MaterialData->Textures[MaterialMap_Color]     = MaterialNode->Value.ColorTexture;
+                    MaterialData->Textures[MaterialMap_Normal]    = MaterialNode->Value.NormalTexture;
+                    MaterialData->Textures[MaterialMap_Roughness] = MaterialNode->Value.RoughnessTexture;
+                    MaterialData->Opacity                         = MaterialNode->Value.Opacity;
+                    MaterialData->Shininess                       = MaterialNode->Value.Shininess;
+                    MaterialData->Path                            = MaterialNode->Value.Path;
+                }
+                
             } break;
 
             default:
@@ -756,5 +738,5 @@ ParseObjFromFile(byte_string Path, engine_memory *EngineMemory)
         }
     }
 
-    return MeshData;
+    return FileData;
 }

@@ -182,7 +182,7 @@ typedef struct
 } static_mesh_list;
 
 
-void             CreateStaticMesh            (asset_file_data AssetFile, renderer *Renderer);
+void             LoadAssetFileData           (asset_file_data AssetFile, memory_arena *Arena, renderer *Renderer);
 static_mesh_list RendererGetAllStaticMeshes  (engine_memory *EngineMemory, renderer *Renderer);
 
 // New API
